@@ -14,9 +14,7 @@ CEPHSTATS_CMD_df='ceph -f json df'
 
 # Log file
 
-: ${CEPHSTATS_LOG_FILE:=/var/log/ceph/ceph-stats.$(date '+%F').log}
-
-: ${CEPHSTATS_LOG_ROTATE_FILE_GLOB:='/var/log/ceph/ceph-stats.*.log'}
+: ${CEPHSTATS_LOG_FILE:='/var/log/ceph/ceph-stats.{DATE}.log'}
 : ${CEPHSTATS_LOG_ROTATE_DAYS:=7}
 
 #
@@ -42,6 +40,20 @@ list_vars()
     done
 }
 
+logfile()
+{
+    local date
+
+    if [ "$#" -gt 0 ]
+    then
+	date="$1"
+    else
+	date=$(date '+%F')
+    fi
+
+    printf "%s" "${CEPHSTATS_LOG_FILE}" | sed -e "s/{DATE}/${date}/g"
+}
+
 usage()
 {
     echo "usage: $0 [interval]"                                              >&2
@@ -63,10 +75,10 @@ rotate()
 {
     local f
 
-    for f in `eval echo $GLOB`
+    for f in `eval echo $(logfile '*')`
     do
 	test -f "${f}" || continue
-	find "${f}" -mtime -"${CEPHSTATS_LOG_ROTATE_DAYS}" -exec rm {} \;
+	find "${f}" -type f -mtime +"${CEPHSTATS_LOG_ROTATE_DAYS}" -exec rm {} \;
     done
 }
 
@@ -80,7 +92,7 @@ collect()
 	cmd=$(eval echo '$'${var})
 	printf "%s [%s] " "$(date '+%F %T')" "${name}"
 	$cmd | sed '/^[[:space:]]*$/d'
-    done >> ${CEPHSTATS_LOG_FILE}
+    done >> "$(logfile)"
 }
 
 main()
