@@ -6,7 +6,6 @@
 
 LANG=C
 
-
 # Stats commands to run
 
 HOSTSTATS_CMD_top='top -b -d {PERIOD} -n {COUNT}'
