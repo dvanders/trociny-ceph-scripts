@@ -56,7 +56,7 @@ logfile()
 
 usage()
 {
-    echo "usage: $0 [interval]"                                              >&2
+    echo "usage: $0 [interval [count]]"                                      >&2
     echo ""                                                                  >&2
     echo "Collect Ceph statistics to ${CEPHSTATS_LOG_FILE}"                  >&2
     echo "running the following commands:"                                   >&2
@@ -95,25 +95,45 @@ collect()
     done >> "$(logfile)"
 }
 
-main()
+get_arg()
 {
-    local interval=-1
-
     case $1 in
 	"")
+	    echo -1
 	    ;;
 	[0-9]*)
-	    interval=$1
+	    echo $1
 	    ;;
 	*)
 	    usage
 	    ;;
     esac
+}
+
+main()
+{
+    local interval=$(get_arg $1)
+    local count=$(get_arg $2)
 
     rotate
     collect
 
     test ${interval} -lt 0 && return
+
+    if [ $count -ge 0 ]
+    then
+	local i
+
+	test $count -le 1 && return
+
+	for i in `seq $((count - 1))`
+	do
+	    sleep ${interval} || return
+	    rotate
+	    collect
+	done
+	return
+    fi
 
     while sleep ${interval}
     do
