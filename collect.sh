@@ -11,21 +11,28 @@ set -e
 
 DATE=$(date '+%F')
 
+_CEPH_CLUSTER_IPS=
+
 #
 # Functions
 #
 
 list_ips()
 {
-    (
-	for id in `ceph osd ls`
-	do 
-	    ceph osd find ${id} |
-	    sed -nEe 's/^.*"ip": "([^:]*):.*/\1/p'
-	done
-	ceph mon dump 2>/dev/null |
-	sed -nEe 's/^[0-9]*: ([^:]*):.*$/\1/p'
-    ) | sort -u
+    test -z "${_CEPH_CLUSTER_IPS}" &&
+    _CEPH_CLUSTER_IPS=$(
+	(
+	    for id in `ceph osd ls`
+	    do
+		ceph osd find ${id} |
+		sed -nEe 's/^.*"ip": "([^:]*):.*/\1/p'
+	    done
+	    ceph mon dump 2>/dev/null |
+	    sed -nEe 's/^[0-9]*: ([^:]*):.*$/\1/p'
+	) | sort -u
+    )
+    echo ${_CEPH_CLUSTER_IPS}
+    return
 }
 
 is_my_ip()
