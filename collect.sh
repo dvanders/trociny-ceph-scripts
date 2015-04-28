@@ -70,8 +70,12 @@ collect_host_stats()
     local ip=$1; shift
 
     mkdir -p "${CEPH_DATA_DIR}"/${ip}
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/report.sh
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/ceph-stats/report_all_daemons.sh
     ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/collect.sh "$@"
-    scp ${ip}:"/var/log/ceph/ceph-stats.*.${DATE}.log" "${CEPH_DATA_DIR}/${ip}"
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/report.sh
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/ceph-stats/report_all_daemons.sh
+    scp ${ip}:"/var/log/ceph/ceph-*.log" "${CEPH_DATA_DIR}/${ip}"
 }
 
 collect_ceph_stats()
