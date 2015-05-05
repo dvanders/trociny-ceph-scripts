@@ -14,7 +14,9 @@ CEPHSTATS_CMD_df='ceph -f json df'
 
 # Log file
 
-: ${CEPHSTATS_LOG_FILE:='/var/log/ceph/ceph-stats.{DATE}.log'}
+: ${CEPH_LOG_DIR:='/var/log/ceph'}
+: ${CEPHSTATS_LOG_DIR:=${CEPH_LOG_DIR}}
+: ${CEPHSTATS_LOG_FILE:="${CEPHSTATS_LOG_DIR}/ceph-stats.{DATE}.log"}
 : ${CEPHSTATS_LOG_ROTATE_DAYS:=7}
 
 #

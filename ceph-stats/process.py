@@ -11,9 +11,15 @@ import time
 # Global
 #
 
+CEPH_LOG_DIR = os.environ.get('CEPH_LOG_DIR') or \
+               '/var/log/ceph'
+CEPHSTATS_LOG_DIR = os.environ.get('CEPHSTATS_LOG_DIR') or \
+                    CEPH_LOG_DIR
 CEPHSTATS_LOG_FILE = os.environ.get('CEPHSTATS_LOG_FILE') or \
-                     '/var/log/ceph/ceph-stats.{DATE}.log'
+                     CEPHSTATS_LOG_DIR + '/ceph-stats.{DATE}.log'
 
+CEPHSTATS_DATE = os.environ.get('CEPHSTATS_DATE') or \
+                 time.strftime("%F")
 
 #
 # Functions
@@ -27,7 +33,7 @@ def parse_args():
         '-d', '--date',
         metavar='YYYY-MM-DD',
         help='date to parse data for',
-        default=time.strftime("%F"),
+        default=CEPHSTATS_DATE,
         )
     parser.add_argument(
         'name',

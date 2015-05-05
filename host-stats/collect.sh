@@ -17,7 +17,9 @@ HOSTSTATS_CMD_vmstat='hoststats_vmstat {PERIOD} {COUNT}'
 
 # Log file
 
-: ${HOSTSTATS_LOG_FILE:='/var/log/ceph/ceph-stats.{CMD}.{DATE}.log'}
+: ${CEPH_LOG_DIR:='/var/log/ceph'}
+: ${HOSTSTATS_LOG_DIR:=${CEPH_LOG_DIR}}
+: ${HOSTSTATS_LOG_FILE:="${HOSTSTATS_LOG_DIR}/ceph-stats.{CMD}.{DATE}.log"}
 : ${HOSTSTATS_LOG_ROTATE_DAYS:=7}
 
 #

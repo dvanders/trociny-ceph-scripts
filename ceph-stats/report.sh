@@ -24,7 +24,9 @@ CEPHREPORT_OSD_CMD_perf='perf dump'
 
 # Log file
 
-: ${CEPHREPORT_LOG_FILE:='/var/log/ceph/ceph-report.{DAEMON}.{CMD}.{DATE}.log'}
+: ${CEPH_LOG_DIR:='/var/log/ceph'}
+: ${CEPHREPORT_LOG_DIR:=${CEPH_LOG_DIR}}
+: ${CEPHREPORT_LOG_FILE:="${CEPHREPORT_LOG_DIR}/ceph-report.{DAEMON}.{CMD}.{DATE}.log"}
 
 #
 # Functions
