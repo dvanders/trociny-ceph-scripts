@@ -9,7 +9,6 @@
 CEPHREPORT_MON_CMD_version='version'
 CEPHREPORT_MON_CMD_config='config show'
 CEPHREPORT_MON_CMD_status='mon_status'
-CEPHREPORT_MON_CMD_log='log dump'
 CEPHREPORT_MON_CMD_perf='perf dump'
 
 CEPHREPORT_OSD_CMD_version='version'
