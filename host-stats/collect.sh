@@ -149,7 +149,7 @@ hoststats_diskstats()
 
 hoststats_netstat_i()
 {
-    hoststats_cmd $@ netstat -ni
+    hoststats_cmd $@ cat /proc/net/dev
 }
 
 hoststats_netstat_s()
