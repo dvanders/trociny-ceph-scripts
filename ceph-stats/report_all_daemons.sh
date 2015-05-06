@@ -14,7 +14,7 @@
 
 list_daemons()
 {
-    ps auxww |sed -nEe 's/^.*ceph-(mon|osd) -i *([^ ]*) .*/\1.\2/p'
+    ps auxww |sed -nEe 's/^.*ceph-(mon|osd) .*-i *([^ ]*) .*/\1.\2/p'
 }
 
 
