@@ -4,17 +4,6 @@
 # Globals
 #
 
-# Ceph stats data to generate
-
-CEPHSTATS_DATA_df_rbd_objects="df 'pools 0 stats objects'"
-CEPHSTATS_DATA_df_rbd_kb_used="df 'pools 0 stats kb_used'"
-CEPHSTATS_DATA_monmap_election_epoch="status 'election_epoch'"
-CEPHSTATS_DATA_osdmap_osds="status 'osdmap osdmap num_osds' 'osdmap osdmap num_up_osds' 'osdmap osdmap num_in_osds'"
-CEPHSTATS_DATA_osdmap_remapped_pgs="status 'osdmap osdmap num_remapped_pgs'"
-CEPHSTATS_DATA_pgmap_version="status 'pgmap version'"
-CEPHSTATS_DATA_pgmap_data_bytes="status 'pgmap data_bytes'"
-CEPHSTATS_DATA_pgmap_usage="status 'pgmap bytes_used' 'pgmap bytes_avail' 'pgmap bytes_total'"
-
 # Generate data for this date
 : ${CEPHSTATS_DATE:=$(date '+%F')}
 
@@ -32,6 +21,33 @@ CEPHSTATS_DATA_pgmap_usage="status 'pgmap bytes_used' 'pgmap bytes_avail' 'pgmap
 
 # Gnuplot command (set to empty to disable graphs)
 : ${CEPHSTATS_DEBUG:=1}
+
+
+# Ceph stats data to generate
+
+CEPHSTATS_DATA_df="df 'stats total_avail' 'stats total_space' 'stats total_used'"
+CEPHSTATS_DATA_monmap_election_epoch="status 'election_epoch'"
+CEPHSTATS_DATA_osdmap_osds="status 'osdmap osdmap num_osds' 'osdmap osdmap num_up_osds' 'osdmap osdmap num_in_osds'"
+CEPHSTATS_DATA_osdmap_remapped_pgs="status 'osdmap osdmap num_remapped_pgs'"
+CEPHSTATS_DATA_pgmap_version="status 'pgmap version'"
+CEPHSTATS_DATA_pgmap_data_bytes="status 'pgmap data_bytes'"
+CEPHSTATS_DATA_pgmap_usage="status 'pgmap bytes_used' 'pgmap bytes_avail' 'pgmap bytes_total'"
+CEPHSTATS_DATA_pgmap_bytes_sec="status 'pgmap read_bytes_sec' 'pgmap write_bytes_sec' 'pgmap recovering_bytes_per_sec'"
+CEPHSTATS_DATA_pgmap_recovering="status 'pgmap recovering_objects_per_sec' 'pgmap recovering_keys_per_sec'"
+CEPHSTATS_DATA_pgmap_op_per_sec="status 'pgmap op_per_sec'"
+CEPHSTATS_DATA_pgmap_degraded_ratio="status 'pgmap degraded_ratio'"
+CEPHSTATS_DATA_pgmap_degraded_objects="status 'pgmap degraded_objects'"
+CEPHSTATS_DATA_pgmap_degraded_total="status 'pgmap degraded_total'"
+
+for i in `seq 100`
+do
+    name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" |
+          awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
+          sed -s 's/[^[:alpha:]0-9]/_/g'`
+    echo "${i}: ${name}"
+    test -n "${name}" || continue
+    eval "CEPHSTATS_DATA_df_${name}=\"df 'pools ${i} stats objects'\""
+done
 
 #
 # Functions
@@ -104,6 +120,8 @@ generate_plots()
 	debug "Plotting $name"
 	(
 	    echo "set term png size 800,600"
+	    echo "set style data lp"
+	    echo "set grid"
 	    echo "set output '${CEPHSTATS_PLOTDIR}/$(basename $f .dat).png'"
 	    echo "set timefmt '%Y-%m-%d %H:%M'"
 	    echo "set xdata time"
@@ -124,6 +142,7 @@ generate_plots()
 
 main()
 {
+    make
     generate_data
     generate_plots
 }
