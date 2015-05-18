@@ -19,14 +19,13 @@ CEPHREPORT_OSD_CMD_watchers='dump_watchers'
 CEPHREPORT_OSD_CMD_blacklist='dump_blacklist'
 CEPHREPORT_OSD_CMD_ops_in_flight='dump_ops_in_flight'
 CEPHREPORT_OSD_CMD_historic_ops='dump_historic_ops'
-CEPHREPORT_OSD_CMD_log='log dump'
 CEPHREPORT_OSD_CMD_perf='perf dump'
 
 # Log file
 
 : ${CEPH_LOG_DIR:='/var/log/ceph'}
 : ${CEPHREPORT_LOG_DIR:=${CEPH_LOG_DIR}}
-: ${CEPHREPORT_LOG_FILE:="${CEPHREPORT_LOG_DIR}/ceph-report.{DAEMON}.{CMD}.{DATE}.log"}
+: ${CEPHREPORT_LOG_FILE:=${CEPHREPORT_LOG_DIR}/'ceph-report.{DAEMON}.{CMD}.{DATE}.log'}
 
 #
 # Functions
