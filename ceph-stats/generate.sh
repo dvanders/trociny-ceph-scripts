@@ -44,7 +44,6 @@ do
     name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" |
           awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
           sed -s 's/[^[:alpha:]0-9]/_/g'`
-    echo "${i}: ${name}"
     test -n "${name}" || continue
     eval "CEPHSTATS_DATA_df_${name}=\"df 'pools ${i} stats objects'\""
 done
