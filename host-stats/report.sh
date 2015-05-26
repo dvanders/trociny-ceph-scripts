@@ -10,6 +10,12 @@ HOSTREPORT_CMD_ntp='ntpdc -p'
 HOSTREPORT_CMD_dmesg='dmesg'
 HOSTREPORT_CMD_vmstat_s='vmstat -s'
 HOSTREPORT_CMD_vmstat_m='vmstat -m'
+HOSTREPORT_CMD_disk_list='ceph-disk list'
+HOSTREPORT_CMD_mount='mount'
+HOSTREPORT_CMD_df='df -hT'
+HOSTREPORT_CMD_journal='ls -l /var/lib/ceph/osd/ceph-*/journal'
+HOSTREPORT_CMD_mon_store='du -hs /var/lib/ceph/mon/ceph-node-*/store.db'
+HOSTREPORT_CMD_ceph_dirs='ls /var/lib/ceph/*'
 
 # Log file
 
