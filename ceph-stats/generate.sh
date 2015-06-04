@@ -39,13 +39,21 @@ CEPHSTATS_DATA_pgmap_degraded_ratio="status 'pgmap degraded_ratio'"
 CEPHSTATS_DATA_pgmap_degraded_objects="status 'pgmap degraded_objects'"
 CEPHSTATS_DATA_pgmap_degraded_total="status 'pgmap degraded_total'"
 
-for i in `seq 100`
+for i in `seq 0 100`
 do
     name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" |
           awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
           sed -s 's/[^[:alpha:]0-9]/_/g'`
     test -n "${name}" || continue
     eval "CEPHSTATS_DATA_df_${name}=\"df 'pools ${i} stats objects'\""
+done
+
+for i in `seq 0 100`
+do
+    ${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" osdperf "osd_perf_infos ${i} id" |
+        awk '$1 !~ /^#/ && $3 != "-" {exit 37}'
+    test $? -ne 37 && continue
+    eval "CEPHSTATS_DATA_osdperf_${i}=\"osdperf 'osd_perf_infos ${i} perf_stats apply_latency_ms' 'osd_perf_infos ${i} perf_stats commit_latency_ms'\""
 done
 
 #
@@ -122,7 +130,7 @@ generate_plots()
 	    echo "set style data lp"
 	    echo "set grid"
 	    echo "set output '${CEPHSTATS_PLOTDIR}/$(basename $f .dat).png'"
-	    echo "set timefmt '%Y-%m-%d %H:%M'"
+	    echo "set timefmt '%Y-%m-%d %H:%M:%S'"
 	    echo "set xdata time"
 	    echo "set format x '%H:%M'"
 	    echo "set xlabel 'time'"
