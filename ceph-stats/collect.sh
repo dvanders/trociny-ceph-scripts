@@ -9,6 +9,7 @@
 CEPHSTATS_CMD_status='ceph -f json status'
 CEPHSTATS_CMD_health='ceph -f json health detail'
 CEPHSTATS_CMD_osddump='ceph -f json osd dump'
+CEPHSTATS_CMD_osdperf='ceph -f json osd perf'
 CEPHSTATS_CMD_poolstats='ceph -f json osd pool stats'
 CEPHSTATS_CMD_df='ceph -f json df'
 
