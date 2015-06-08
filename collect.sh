@@ -78,6 +78,14 @@ collect_host_stats()
     scp ${ip}:"/var/log/ceph/ceph-*.log" "${CEPH_DATA_DIR}/${ip}"
 }
 
+collect_perf_stats()
+{
+    local ip=$1; shift
+
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/ceph-stats/collect-perf_all_daemons.sh "$@" || :
+    scp ${ip}:"/var/log/ceph/ceph-stats.*.perf.${DATE}.log" "${CEPH_DATA_DIR}"
+}
+
 collect_ceph_stats()
 {
     ${CEPH_SCRIPTS_DIR}/ceph-stats/collect.sh "$@"
@@ -89,6 +97,7 @@ collect()
     for ip in $(list_ips)
     do
 	collect_host_stats ${ip} "$@"&
+	collect_perf_stats ${ip} "$@"&
     done
 
     collect_ceph_stats "$@"&
