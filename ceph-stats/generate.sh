@@ -41,7 +41,7 @@ CEPHSTATS_DATA_pgmap_degraded_total="status 'pgmap degraded_total'"
 
 for i in `seq 0 100`
 do
-    name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" |
+    name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" 2> /dev/null|
           awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
           sed -s 's/[^[:alpha:]0-9]/_/g'`
     test -n "${name}" || continue
@@ -50,10 +50,30 @@ done
 
 for i in `seq 0 100`
 do
-    ${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" osdperf "osd_perf_infos ${i} id" |
+    ${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" osdperf "osd_perf_infos ${i} id" 2> /dev/null |
         awk '$1 !~ /^#/ && $3 != "-" {exit 37}'
     test $? -ne 37 && continue
     eval "CEPHSTATS_DATA_osdperf_${i}=\"osdperf 'osd_perf_infos ${i} perf_stats apply_latency_ms' 'osd_perf_infos ${i} perf_stats commit_latency_ms'\""
+done
+
+for d in `${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" -D 'mon.*' list`
+do
+    name=$(echo ${d} | sed -s 's/[^[:alpha:]0-9]/_/g')
+    eval "CEPHPERF_DATA_MON_${name}_paxos_begin_latency=\"-D ${d} perf 'paxos begin_latency avgcount' 'paxos begin_latency sum'\""
+    eval "CEPHPERF_DATA_MON_${name}_paxos_collect_latency=\"-D ${d} perf 'paxos collect_latency avgcount' 'paxos collect_latency sum'\""
+    eval "CEPHPERF_DATA_MON_${name}_paxos_commit_latency=\"-D ${d} perf 'paxos commit_latency avgcount' 'paxos commit_latency sum'\""
+    eval "CEPHPERF_DATA_MON_${name}_paxos_new_pn_latency=\"-D ${d} perf 'paxos new_pn_latency avgcount' 'paxos new_pn_latency sum'\""
+    eval "CEPHPERF_DATA_MON_${name}_paxos_refresh_latency=\"-D ${d} perf 'paxos refresh_latency avgcount' 'paxos refresh_latency sum'\""
+    eval "CEPHPERF_DATA_MON_${name}_paxos_store_state_latency=\"-D ${d} perf 'paxos store_state_latency avgcount' 'paxos store_state_latency sum'\""
+done
+
+for d in `${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" -D 'osd.*' list`
+do
+    eval "CEPHPERF_DATA_OSD_${d#osd.}_filestore_apply_latency=\"-D ${d} perf 'filestore apply_latency avgcount' 'filestore apply_latency sum'\""
+    eval "CEPHPERF_DATA_OSD_${d#osd.}_filestore_commitcycle_latency=\"-D ${d} perf 'filestore commitcycle_latency avgcount' 'filestore commitcycle_latency sum'\""
+    eval "CEPHPERF_DATA_OSD_${d#osd.}_filestore_journal_latency=\"-D ${d} perf 'filestore journal_latency avgcount' 'filestore journal_latency sum'\""
+    eval "CEPHPERF_DATA_OSD_${d#osd.}_filestore_journal_wr_bytes=\"-D ${d} perf 'filestore journal_wr_bytes avgcount' 'filestore journal_wr_bytes sum'\""
+    eval "CEPHPERF_DATA_OSD_${d#osd.}_filestore_queue_transaction_latency_avg=\"-D ${d} perf 'filestore queue_transaction_latency_avg avgcount' 'filestore queue_transaction_latency_avg sum'\""
 done
 
 #
@@ -105,6 +125,31 @@ generate_data()
 	) > "${CEPHSTATS_DATADIR}/${name}.${CEPHSTATS_DATE}.dat"
     done
 
+    for var in $(list_vars 'CEPHPERF_DATA_MON_*')
+    do
+	name=${var##CEPHPERF_DATA_MON_}
+	debug "Processing $name"
+	(eval exec "${CEPHSTATS_BINDIR}/process.py" -d "${CEPHSTATS_DATE}" \
+	    $(eval echo \$${var})
+	) | awk '
+             /^#/                               {print $1, $2, gensub(/^.*time" "([^"]*) avgcount".*$/, "\"\\1\"", "g")}
+            !/^#/ && avgcount && avgcount < $3  {print $1, $2, ($4 - sum) / ($3 - avgcount)}
+            !/^#/                               {avgcount = $3 ; sum = $4}
+        ' > "${CEPHSTATS_DATADIR}/${name}.perf.${CEPHSTATS_DATE}.dat"
+    done
+
+    for var in $(list_vars 'CEPHPERF_DATA_OSD_*')
+    do
+	name=${var##CEPHPERF_DATA_OSD_}
+	debug "Processing $name"
+	(eval exec "${CEPHSTATS_BINDIR}/process.py" -d "${CEPHSTATS_DATE}" \
+	    $(eval echo \$${var})
+	) | awk '
+             /^#/                               {print $1, $2, gensub(/^.*time" "([^"]*) avgcount".*$/, "\"\\1\"", "g")}
+            !/^#/ && avgcount && avgcount < $3  {print $1, $2, ($4 - sum) / ($3 - avgcount)}
+            !/^#/                               {avgcount = $3 ; sum = $4}
+        ' > "${CEPHSTATS_DATADIR}/osd.${name}.perf.${CEPHSTATS_DATE}.dat"
+    done
 }
 
 generate_plots()
