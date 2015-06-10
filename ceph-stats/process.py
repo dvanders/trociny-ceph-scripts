@@ -70,6 +70,16 @@ def logfile(ctx):
 
 def main():
     ctx = parse_args()
+
+    if ctx.daemon and ctx.name == 'list':
+        ls = os.popen("ls %s 2>/dev/null" % (logfile(ctx))).read().strip().split("\n");
+        r = re.compile('^.*\.((osd|mon)\..*)\.perf\..*$')
+        for f in ls:
+            m = r.match(f)
+            if m:
+                print m.group(1)
+        return
+
     f = open(logfile(ctx), 'r')
     r = re.compile('^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d) \[%s\] \s*(.*)$' % (ctx.name))
     if not ctx.json_pretty:
