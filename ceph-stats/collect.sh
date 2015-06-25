@@ -115,8 +115,10 @@ get_arg()
 
 main()
 {
-    local interval=$(get_arg $1)
-    local count=$(get_arg $2)
+    local interval count
+
+    interval=$(get_arg $1) || exit 1
+    count=$(get_arg $2)    || exit 1
 
     rotate
     collect
