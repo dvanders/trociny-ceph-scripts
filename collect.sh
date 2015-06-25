@@ -67,12 +67,21 @@ deploy_scripts()
 
 collect_host_stats()
 {
-    local ip=$1; shift
+    local ip=$1
+    local period=$2
+    local count=$3
+
+    # Forse 10 sec period if it is larger
+    if [ -n "${count}" -a -n "${period}" -a ${period} -gt 10 ]
+    then
+	count=$((count * period / 10))
+	period=10
+    fi
 
     mkdir -p "${CEPH_DATA_DIR}"/${ip}
     ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/report.sh || :
     ssh ${ip} ${CEPH_SCRIPTS_DIR}/ceph-stats/report_all_daemons.sh || :
-    ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/collect.sh "$@" || :
+    ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/collect.sh ${period} ${count} || :
     ssh ${ip} ${CEPH_SCRIPTS_DIR}/host-stats/report.sh || :
     ssh ${ip} ${CEPH_SCRIPTS_DIR}/ceph-stats/report_all_daemons.sh || :
     scp ${ip}:"/var/log/ceph/ceph-*.log" "${CEPH_DATA_DIR}/${ip}"
