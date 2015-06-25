@@ -39,7 +39,7 @@ CEPHSTATS_DATA_pgmap_degraded_ratio="status 'pgmap degraded_ratio'"
 CEPHSTATS_DATA_pgmap_degraded_objects="status 'pgmap degraded_objects'"
 CEPHSTATS_DATA_pgmap_degraded_total="status 'pgmap degraded_total'"
 
-for i in `seq 0 100`
+for i in `seq 0 1024`
 do
     name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" 2> /dev/null|
           awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
@@ -48,7 +48,7 @@ do
     eval "CEPHSTATS_DATA_df_${name}=\"df 'pools ${i} stats objects'\""
 done
 
-for i in `seq 0 100`
+for i in `seq 0 1024`
 do
     ${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" osdperf "osd_perf_infos ${i} id" 2> /dev/null |
         awk '$1 !~ /^#/ && $3 != "-" {exit 37}'
@@ -169,7 +169,7 @@ generate_plots()
 
     for f in "${CEPHSTATS_DATADIR}"/*."${CEPHSTATS_DATE}.dat"
     do
-	debug "Plotting $name"
+	debug "Plotting $f"
 	(
 	    echo "set term png size 800,600"
 	    echo "set style data lp"
