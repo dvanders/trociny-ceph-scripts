@@ -43,7 +43,7 @@ for i in `seq 0 1024`
 do
     name=`${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" df "pools ${i} name" 2> /dev/null|
           awk '$1 !~ /^#/ && $3 != "-" {print $3; exit}' |
-          sed -s 's/[^[:alpha:]0-9]/_/g'`
+          sed -e 's/[^[:alpha:]0-9]/_/g'`
     test -n "${name}" || continue
     eval "CEPHSTATS_DATA_df_${name}=\"df 'pools ${i} stats objects'\""
 done
@@ -58,7 +58,7 @@ done
 
 for d in `${CEPHSTATS_BINDIR}/process.py -d "${CEPHSTATS_DATE}" -D 'mon.*' list`
 do
-    name=$(echo ${d} | sed -s 's/[^[:alpha:]0-9]/_/g')
+    name=$(echo ${d} | sed -e 's/[^[:alpha:]0-9]/_/g')
     eval "CEPHPERF_DATA_MON_${name}_paxos_begin_latency=\"-D ${d} perf 'paxos begin_latency avgcount' 'paxos begin_latency sum'\""
     eval "CEPHPERF_DATA_MON_${name}_paxos_collect_latency=\"-D ${d} perf 'paxos collect_latency avgcount' 'paxos collect_latency sum'\""
     eval "CEPHPERF_DATA_MON_${name}_paxos_commit_latency=\"-D ${d} perf 'paxos commit_latency avgcount' 'paxos commit_latency sum'\""
