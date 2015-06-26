@@ -150,6 +150,16 @@ generate_data()
             !/^#/                               {avgcount = $3 ; sum = $4}
         ' > "${CEPHSTATS_DATADIR}/osd.${name}.perf.${CEPHSTATS_DATE}.dat"
     done
+
+    for name in `ls ${CEPHSTATS_DATADIR}/osd.[0-9]*.perf.${CEPHSTATS_DATE}.dat | sed -ne 's/.*osd\.[0-9]*_//; s/\.perf\..*//p' | sort -u`
+    do
+	for f in `ls ${CEPHSTATS_DATADIR}/osd.[0-9]*_${name}.perf.${CEPHSTATS_DATE}.dat`
+	do
+	    osd=$(basename ${f%%_*})
+	    awk '!/^#/ {n++; s += $3} END {if (n > 0) printf ("%s\t%f\n", "'${osd}'", s / n)}' ${f}
+	done |
+        sort -g -k2 > ${CEPHSTATS_DATADIR}/osd.avg.${name}.perf.${CEPHSTATS_DATE}.dat
+    done
 }
 
 generate_plots()
