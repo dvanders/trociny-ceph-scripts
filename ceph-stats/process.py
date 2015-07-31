@@ -84,12 +84,18 @@ def main():
     r = re.compile('^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d) \[%s\] \s*(.*)$' % (ctx.name))
     if not ctx.json_pretty:
         print '#"date" "time"', ' '.join(['"' + x + '"' for x in ctx.key])
+    n = 0
     for line in f:
+        n += 1
         m = r.match(line)
         if not m:
             continue
         t = m.group(1)
-        val = json.loads(m.group(2))
+        try:
+            val = json.loads(m.group(2))
+        except ValueError as e:
+            print >> sys.stderr, "line %d:" % n, e.message
+            continue
         print t,
         if ctx.json_pretty:
             print ctx.name
