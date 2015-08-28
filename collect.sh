@@ -72,7 +72,7 @@ collect_host_stats()
     local count=$3
 
     # Forse 10 sec period if it is larger
-    if [ -n "${count}" -a -n "${period}" -a ${period} -gt 10 ]
+    if [ -n "${count}" -a -n "${period}" ] && [ "${period}" -gt 10 ]
     then
 	count=$((count * period / 10))
 	period=10
