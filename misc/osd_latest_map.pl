@@ -1,5 +1,9 @@
 #!/usr/bin/perl -w
 
+#
+# Report the latest osd_map from all OSDs.
+#
+
 use strict;
 
 my %hosts;
@@ -69,11 +73,9 @@ for my $host (sort keys %hosts)
     print "\n";
 }
 
-if (defined $min_map)
+if (defined $min_map && defined $max_map)
 {
     print "min_map: $min_map ($min_osd)\n";
-}
-if (defined $max_map)
-{
     print "max_map: $max_map ($max_osd)\n";
+    print "maxdiff: " . ($max_map - $min_map) . "\n";
 }
