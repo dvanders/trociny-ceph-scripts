@@ -19,7 +19,9 @@ CEPHREPORT_OSD_CMD_watchers='dump_watchers'
 CEPHREPORT_OSD_CMD_blacklist='dump_blacklist'
 CEPHREPORT_OSD_CMD_ops_in_flight='dump_ops_in_flight'
 CEPHREPORT_OSD_CMD_historic_ops='dump_historic_ops'
+CEPHREPORT_OSD_CMD_historic_ops_by_duration='dump_historic_ops_by_duration'
 CEPHREPORT_OSD_CMD_perf='perf dump'
+CEPHREPORT_OSD_CMD_perf_histogram='perf histogram dump'
 
 # Log file
 
