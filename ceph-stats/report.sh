@@ -94,7 +94,7 @@ collect()
     for var in $(list_vars "${vars}*")
     do
 	name=${var##${vars}}
-	cmd=$(eval echo ceph daemon ${daemon} '$'${var})
+	cmd=$(eval echo ceph --format json daemon ${daemon} '$'${var})
 	echo "[$(date '+%F %T')] ${name}:" >> "$(logfile ${daemon} ${name})"
 	$cmd >> "$(logfile ${daemon} ${name})" 2>&1
     done
