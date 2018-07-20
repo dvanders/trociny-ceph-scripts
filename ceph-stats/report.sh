@@ -95,8 +95,10 @@ collect()
     do
 	name=${var##${vars}}
 	cmd=$(eval echo ceph --format json daemon ${daemon} '$'${var})
-	echo "[$(date '+%F %T')] ${name}:" >> "$(logfile ${daemon} ${name})"
-	$cmd >> "$(logfile ${daemon} ${name})" 2>&1
+	echo -n "[$(date '+%F %T')] ${name}: " >> "$(logfile ${daemon} ${name})"
+	$cmd 2> /dev/null |
+        tr '\n' ' ' |
+        sed -e "s/ *\$/\n/" >> "$(logfile ${daemon} ${name})"
     done
 }
 
