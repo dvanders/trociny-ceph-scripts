@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+#
+# A tool to setup and control nvmeof rbd bdev targets.
+#
+# Typical usage:
+#
+# nvmeof_tgt_ctl setup
+# nvmeof_tgt_ctl create {name} {pool}/{image} {ip:port}
+# nvmeof_tgt_ctl list
+# nvmeof_tgt_ctl status {name}
+# nvmeof_tgt_ctl delete {name}
+# nvmeof_tgt_ctl cleanup
+#
+
+import argparse
+import json
+import os
+import sys
+import time
+
+#
+# Global
+#
+
+NQN_PREFIX = 'nqn.2021-06.io.spdk.snic'
+
+SPDK_PATH = '/home/mgolub/ceph/ceph-nvmeof/spdk'
+SPDK_BIN_PATH = os.path.join(SPDK_PATH, 'build', 'bin')
+SPDK_SCRIPTS_PATH = os.path.join(SPDK_PATH, 'scripts')
+SPDK_RPC = os.path.join(SPDK_SCRIPTS_PATH, 'rpc.py')
+
+CEPH_PATH = '/home/mgolub/ceph/ceph'
+CEPH_BIN_PATH = os.path.join(CEPH_PATH, 'build', 'bin')
+CEPH_LIB_PATH = os.path.join(CEPH_PATH, 'build', 'lib')
+CEPH_CONF_DIR_PATH = os.path.join(CEPH_PATH, 'build')
+
+if CEPH_LIB_PATH:
+    os.environ['LD_LIBRARY_PATH'] = CEPH_LIB_PATH
+
+if CEPH_CONF_DIR_PATH:
+    os.environ['CEPH_ARGS'] = "-c {}/ceph.conf".format(CEPH_CONF_DIR_PATH)
+
+parser = argparse.ArgumentParser(prog='nvmeof_tgt_ctl',
+                                 description='Control nvmeof rbd bdev targets')
+parser.add_argument(
+    'command',
+    metavar='setup|create|delete|status|list',
+    help='command',
+    default=None,
+)
+parser.add_argument(
+    'args',
+    metavar='args',
+    help='command arguments',
+    nargs='*',
+    default=None,
+)
+parser.add_argument(
+    '-v', '--verbose',
+    action='store_true',
+    help='be verbose',
+    default=False,
+)
+
+#
+# Functions
+#
+
+def run_cmd(cmd, verbose=False):
+    if verbose:
+        print("=> {}".format(cmd), file=sys.stderr, flush=True)
+    os.system(cmd)
+
+def run_cmd2(cmd, verbose=False):
+    if verbose:
+        print("=> {}".format(cmd), file=sys.stderr, flush=True)
+    fd = os.popen(cmd)
+    res = fd.readline().strip()
+    fd.close()
+    return res
+
+def run_cmd3(cmd, verbose=False):
+    if verbose:
+        print("=> {}".format(cmd), file=sys.stderr, flush=True)
+    fd = os.popen(cmd)
+    try:
+        res = json.load(fd)
+    except json.decoder.JSONDecodeError as e:
+        if verbose:
+            print("failed parsing `{}` output: {}".format(cmd, e),
+                  file=sys.stderr, flush=True)
+        res = None
+    fd.close()
+    return res
+
+def nvmf_get_subsystems(verbose=False):
+    return run_cmd3("{} nvmf_get_subsystems".format(SPDK_RPC), verbose) or []
+
+def get_subsystem(name, verbose):
+    nqn = "{}:{}".format(NQN_PREFIX, name)
+
+    subsystems = nvmf_get_subsystems(verbose)
+
+    for s in subsystems:
+        if s['nqn'] == nqn:
+            return s
+
+    return None
+
+def get_ns(name, verbose):
+    s = get_subsystem(name, verbose)
+    assert s
+
+    return s['namespaces'][0]['name']
+
+def do_setup(args, verbose=False):
+    setup_sh = os.path.join(SPDK_SCRIPTS_PATH, 'setup.sh')
+    run_cmd(setup_sh, verbose)
+
+    nvmf_tgt = os.path.join(SPDK_BIN_PATH, 'nvmf_tgt')
+    run_cmd("cd {} && nohup {} &".format(CEPH_CONF_DIR_PATH, nvmf_tgt), verbose)
+    time.sleep(3)
+
+    opts = "-q 256 -p 18 -u 1048576 -i 1048576 -n 1023"
+    run_cmd("{} nvmf_create_transport -t TCP {}".format(SPDK_RPC, opts), verbose)
+
+def do_cleanup(args, verbose=False):
+    nvmf_tgt = os.path.join(SPDK_BIN_PATH, 'nvmf_tgt')
+    pid = run_cmd2(
+        "ps auxww | awk -v nvmf_tgt='{}' '$11 == nvmf_tgt {{print $2}}'".format(
+            nvmf_tgt), verbose)
+    if pid:
+        run_cmd("kill {}".format(pid), verbose)
+
+def do_create(args, verbose=False):
+    name = args[0]
+    image_spec = args[1]
+    addr = args[2]
+
+    assert name
+    nqn = "{}:{}".format(NQN_PREFIX, name)
+
+    pool, image = image_spec.split('/')
+    assert pool and image
+
+    ip, port = addr.split(':')
+    assert ip and port
+
+    ns = run_cmd2("{} bdev_rbd_create {} {} 4096".format(SPDK_RPC, pool, image),
+                  verbose)
+    assert ns
+    run_cmd("{} nvmf_create_subsystem {} -d SPDK-20 -a".format(SPDK_RPC, nqn),
+            verbose)
+    run_cmd("{} nvmf_subsystem_add_ns {} {}".format(SPDK_RPC, nqn, ns), verbose)
+    run_cmd("{} nvmf_subsystem_add_listener {} -t tcp -a {} -s {}".format(
+        SPDK_RPC, nqn, ip, port), verbose)
+
+def do_delete(args, verbose=False):
+    name = args[0]
+
+    assert name
+    nqn = "{}:{}".format(NQN_PREFIX, name)
+
+    ns = get_ns(name, verbose)
+
+    run_cmd("{} nvmf_delete_subsystem {}".format(SPDK_RPC, nqn), verbose)
+    if ns:
+        run_cmd("{} bdev_rbd_delete {}".format(SPDK_RPC, ns), verbose)
+
+def do_status(args, verbose=False):
+    name = args[0]
+
+    assert name
+    nqn = "{}:{}".format(NQN_PREFIX, name)
+
+    run_cmd("{} nvmf_subsystem_get_listeners {}".format(SPDK_RPC, nqn), verbose)
+
+def do_list(args, verbose=False):
+    subsystems = nvmf_get_subsystems(verbose)
+
+    for s in subsystems:
+        if s['subtype'] == 'NVMe':
+            _, name = s['nqn'].split(':')
+            print("{} : {}".format(name, s), flush=True)
+
+def main():
+    args = parser.parse_args()
+
+    if args.command == 'setup':
+        do_setup(args.args, args.verbose)
+    elif args.command == 'cleanup':
+        do_cleanup(args.args, args.verbose)
+    elif args.command == 'create':
+        do_create(args.args, args.verbose)
+    elif args.command == 'delete':
+        do_delete(args.args, args.verbose)
+    elif args.command == 'status':
+        do_status(args.args, args.verbose)
+    elif args.command == 'list':
+        do_list(args.args, args.verbose)
+    else:
+        assert False
+
+#
+# main
+#
+
+main()
