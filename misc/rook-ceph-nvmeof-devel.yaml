@@ -24,7 +24,9 @@ spec:
           imagePullPolicy: IfNotPresent
           tty: true
           securityContext:
-            runAsNonRoot: false
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: false
           env:
             - name: ROOK_CEPH_USERNAME
               valueFrom:
@@ -41,6 +43,14 @@ spec:
               name: ceph-config
             - name: mon-endpoint-volume
               mountPath: /etc/rook
+            - mountPath: /hugepages
+              name: hugepage
+          resources:
+            limits:
+              hugepages-2Mi: 400Mi
+              memory: 20Gi
+            requests:
+              memory: 20Gi
       volumes:
         - name: mon-endpoint-volume
           configMap:
@@ -50,6 +60,12 @@ spec:
                 path: mon-endpoints
         - name: ceph-config
           emptyDir: {}
+        - name: devices
+          hostPath:
+            path: /dev
+        - name: hugepage
+          emptyDir:
+            medium: HugePages
       tolerations:
         - key: "node.kubernetes.io/unreachable"
           operator: "Exists"

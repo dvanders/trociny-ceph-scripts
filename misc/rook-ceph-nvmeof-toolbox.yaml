@@ -43,6 +43,14 @@ spec:
               name: ceph-config
             - name: mon-endpoint-volume
               mountPath: /etc/rook
+            - mountPath: /hugepages
+              name: hugepage
+          resources:
+            limits:
+              hugepages-2Mi: 400Mi
+              memory: 20Gi
+            requests:
+              memory: 20Gi
       volumes:
         - name: mon-endpoint-volume
           configMap:
@@ -55,9 +63,9 @@ spec:
         - name: devices
           hostPath:
             path: /dev
-        - name: hugepages
-          hostPath:
-            path: /dev/hugepages
+        - name: hugepage
+          emptyDir:
+            medium: HugePages
       tolerations:
         - key: "node.kubernetes.io/unreachable"
           operator: "Exists"
