@@ -21,7 +21,7 @@ spec:
           image: trociny/ceph:rook-ceph-nvmeof
           command: ["/bin/bash"]
           args: ["-m", "-c", "/usr/local/bin/nvmf_tgt.sh"]
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           tty: true
           securityContext:
             privileged: true
@@ -47,10 +47,10 @@ spec:
               name: hugepage
           resources:
             limits:
-              hugepages-2Mi: 400Mi
-              memory: 20Gi
+              hugepages-2Mi: 1024Mi
+              memory: 64Gi
             requests:
-              memory: 20Gi
+              memory: 64Gi
       volumes:
         - name: mon-endpoint-volume
           configMap:
