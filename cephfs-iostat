@@ -1,0 +1,314 @@
+#!/usr/bin/python3
+
+import argparse
+import sys
+import errno
+import json
+import signal
+import time
+import math
+
+from collections import OrderedDict
+from datetime import datetime
+from enum import Enum, unique
+from prettytable import PrettyTable, PLAIN_COLUMNS
+from threading import Event
+
+import rados
+
+
+class IOStatException(Exception):
+    def __init__(self, msg=''):
+        self.error_msg = msg
+
+    def get_error_msg(self):
+        return self.error_msg
+
+
+@unique
+class MetricType(Enum):
+    METRIC_TYPE_NONE = 0
+    METRIC_TYPE_PERCENTAGE = 1
+    METRIC_TYPE_LATENCY = 2
+    METRIC_TYPE_SIZE = 3
+    METRIC_TYPE_STDEV = 4
+
+
+FS_IOSTAT_PROG_STR = 'cephfs-iostat'
+
+# version match b/w fstop and stats emitted by mgr/stats
+FS_IOSTAT_SUPPORTED_VER = 1
+
+DEFAULT_REFRESH_INTERVAL = 5
+# min refresh interval allowed
+MIN_REFRESH_INTERVAL = 1
+
+# adjust this map according to stats version and maintain order
+# as emitted by mgr/stast
+MAIN_WINDOW_TOP_LINE_METRICS = OrderedDict([
+    ("CAP_HIT", MetricType.METRIC_TYPE_PERCENTAGE),
+    ("READ_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("WRITE_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("METADATA_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("DENTRY_LEASE", MetricType.METRIC_TYPE_PERCENTAGE),
+    ("OPENED_FILES", MetricType.METRIC_TYPE_NONE),
+    ("PINNED_ICAPS", MetricType.METRIC_TYPE_NONE),
+    ("OPENED_INODES", MetricType.METRIC_TYPE_NONE),
+    ("READ_IO_SIZES", MetricType.METRIC_TYPE_SIZE),
+    ("WRITE_IO_SIZES", MetricType.METRIC_TYPE_SIZE),
+    ("AVG_READ_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("STDEV_READ_LATENCY", MetricType.METRIC_TYPE_STDEV),
+    ("AVG_WRITE_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("STDEV_WRITE_LATENCY", MetricType.METRIC_TYPE_STDEV),
+    ("AVG_METADATA_LATENCY", MetricType.METRIC_TYPE_LATENCY),
+    ("STDEV_METADATA_LATENCY", MetricType.METRIC_TYPE_STDEV),
+])
+MGR_STATS_COUNTERS = list(MAIN_WINDOW_TOP_LINE_METRICS.keys())
+
+CLIENT_METADATA_KEY = "client_metadata"
+CLIENT_METADATA_MOUNT_POINT_KEY = "mount_point"
+CLIENT_METADATA_MOUNT_ROOT_KEY = "root"
+CLIENT_METADATA_IP_KEY = "IP"
+CLIENT_METADATA_HOSTNAME_KEY = "hostname"
+CLIENT_METADATA_VALID_METRICS_KEY = "valid_metrics"
+
+GLOBAL_METRICS_KEY = "global_metrics"
+GLOBAL_COUNTERS_KEY = "global_counters"
+
+def calc_iops(c, p, duration):
+    assert(duration > 0)
+    if c[0] < p[0]:
+        return 0.0
+    return round((c[0] - p[0]) / duration, 2)
+
+def calc_kbps(c, p, duration):
+    assert(duration > 0)
+    if c[1] < p[1]:
+        return 0.0
+    return round((c[1] - p[1]) / 1024 / duration, 2)
+
+class IOStat(object):
+    def __init__(self, args):
+        self.rados = None
+        self.client_name = args.id
+        self.cluster_name = args.cluster
+        self.conffile = args.conffile
+        self.refresh_interval_secs = args.delay
+        self.ntop = args.top
+        self.exit_ev = Event()
+        self.last_metrics = None
+        self.last_time = None
+
+    def handle_signal(self, signum, _):
+        self.exit_ev.set()
+
+    def init(self):
+        try:
+            if self.conffile:
+                r_rados = rados.Rados(rados_id=self.client_name, clustername=self.cluster_name,
+                                      conffile=self.conffile)
+            else:
+                r_rados = rados.Rados(rados_id=self.client_name, clustername=self.cluster_name)
+            r_rados.conf_read_file()
+            r_rados.connect()
+            self.rados = r_rados
+        except rados.Error as e:
+            if e.errno == errno.ENOENT:
+                raise IOStatException(f'cluster {self.cluster_name} does not exist')
+            else:
+                raise IOStatException(f'error connecting to cluster: {e}')
+        self.verify_perf_stats_support()
+        signal.signal(signal.SIGTERM, self.handle_signal)
+        signal.signal(signal.SIGINT, self.handle_signal)
+
+    def fini(self):
+        if self.rados:
+            self.rados.shutdown()
+            self.rados = None
+
+    def selftest(self):
+        stats_json = self.perf_stats_query()
+        if not stats_json['version'] == FS_IOSTAT_SUPPORTED_VER:
+            raise IOStatException('perf stats version mismatch!')
+        missing = [m for m in stats_json["global_counters"] if m.upper() not in MGR_STATS_COUNTERS]
+        if missing:
+            raise IOStatException('Cannot handle unknown metrics from \'ceph fs perf stats\': '
+                                 f'{missing}')
+        sys.stdout.write("selftest ok\n")
+
+    def verify_perf_stats_support(self):
+        mon_cmd = {'prefix': 'mgr module ls', 'format': 'json'}
+        try:
+            ret, buf, out = self.rados.mon_command(json.dumps(mon_cmd), b'')
+        except Exception as e:
+            raise IOStatException(f'error checking \'stats\' module: {e}')
+        if ret != 0:
+            raise IOStatException(f'error checking \'stats\' module: {out}')
+        if 'stats' not in json.loads(buf.decode('utf-8'))['enabled_modules']:
+            raise IOStatException('\'stats\' module not enabled. Use \'ceph mgr module '
+                                 'enable stats\' to enable')
+
+    def perf_stats_query(self):
+        mgr_cmd = {'prefix': 'fs perf stats', 'format': 'json'}
+        try:
+            ret, buf, out = self.rados.mgr_command(json.dumps(mgr_cmd), b'')
+        except Exception as e:
+            raise IOStatException(f'error in \'perf stats\' query: {e}')
+        if ret != 0:
+            raise IOStatException(f'error in \'perf stats\' query: {out}')
+
+        stats_json = json.loads(buf.decode('utf-8'))
+        if not stats_json['version'] == FS_IOSTAT_SUPPORTED_VER:
+            raise IOStatException('perf stats version mismatch!')
+
+        return stats_json
+
+    def calc_clients(self, stats_json):
+        counters = [m.upper() for m in stats_json[GLOBAL_COUNTERS_KEY]]
+        curr_time = time.time()
+        duration = self.last_time and \
+            (curr_time - self.last_time) or None
+
+        client_stats = []
+
+        for client_id, curr_metrics in stats_json[GLOBAL_METRICS_KEY].items():
+            prev_metrics = self.last_metrics and \
+                self.last_metrics.get(client_id, None) or None
+            client_stats.append(
+                self.calc_client(client_id, counters, prev_metrics,
+                                 curr_metrics, duration,
+                                 stats_json[CLIENT_METADATA_KEY][client_id]))
+
+        self.last_time = curr_time
+        self.last_metrics = stats_json[GLOBAL_METRICS_KEY]
+
+        return client_stats
+
+
+    def calc_client(self, client_id, counters, prev_metrics, curr_metrics,
+                    duration, client_meta):
+        cstats = dict(zip(counters, curr_metrics))
+        hostname = client_meta.get(CLIENT_METADATA_HOSTNAME_KEY, None) or \
+            client_meta.get(CLIENT_METADATA_IP_KEY, None)
+
+        s = {}
+
+        if hostname:
+            s['client'] = f'{client_id}@{hostname}'
+        else:
+            s['client'] = client_id
+
+        s['mount_root'] = client_meta.get(CLIENT_METADATA_MOUNT_ROOT_KEY, None)
+        s['oicaps'] = cstats['PINNED_ICAPS'][0]
+
+        if duration and prev_metrics:
+            pstats = dict(zip(counters, prev_metrics))
+            s['r/s'] = calc_iops(cstats['READ_IO_SIZES'], pstats['READ_IO_SIZES'],
+                                 duration)
+            s['rkB/s'] = calc_kbps(cstats['READ_IO_SIZES'], pstats['READ_IO_SIZES'],
+                                   duration)
+            s['w/s'] = calc_iops(cstats['WRITE_IO_SIZES'], pstats['WRITE_IO_SIZES'],
+                                 duration)
+            s['wkB/s'] = calc_kbps(cstats['WRITE_IO_SIZES'], pstats['WRITE_IO_SIZES'],
+                                   duration)
+            s['sort'] = s['r/s'] + s['w/s']
+        else:
+            s['r/s'] = None
+            s['rkB/s'] = None
+            s['w/s'] = None
+            s['wkB/s'] = None
+            s['sort'] = 0
+
+        return s
+
+
+    def display_header(self, stats_json):
+        now = datetime.now().ctime()
+        client_metadata = stats_json[CLIENT_METADATA_KEY]
+        num_clients = len(client_metadata)
+        num_mounts = len([client for client, metadata in client_metadata.items() if
+                          CLIENT_METADATA_MOUNT_POINT_KEY in metadata
+                          and metadata[CLIENT_METADATA_MOUNT_POINT_KEY] != 'N/A'])
+        num_kclients = len([client for client, metadata in client_metadata.items() if
+                            "kernel_version" in metadata])
+        num_libs = num_clients - (num_mounts + num_kclients)
+
+        print(f'{FS_IOSTAT_PROG_STR} - {now}')
+        print(f'Clients(s): {num_clients} - {num_mounts} FUSE, {num_kclients} kclient, {num_libs} libcephfs')
+        print()
+
+    def display_client_stats(self, stats_json):
+        client_stats = self.calc_clients(stats_json)
+
+        if not client_stats:
+            return
+
+        if self.ntop and self.ntop > 0:
+            client_stats.sort(key=lambda c: c['sort'], reverse=True)
+            if self.ntop < len(client_stats):
+                client_stats = client_stats[:self.ntop]
+
+        column_names = ('client', 'mount_root', 'oicaps', 'r/s', 'rkB/s', 'w/s', 'wkB/s')
+        tbl = PrettyTable()
+        tbl.set_style(PLAIN_COLUMNS)
+        tbl.field_names = column_names
+
+        for s in client_stats:
+            tbl.add_row([s[k] is None and "-" or s[k] for k in column_names])
+
+        print(tbl)
+        print()
+
+
+    def display_stats(self, stats_json):
+        self.display_header(stats_json)
+        self.display_client_stats(stats_json)
+
+    def run_display(self):
+        while not self.exit_ev.is_set():
+            stats_json = self.perf_stats_query()
+            self.display_stats(stats_json)
+            self.exit_ev.wait(timeout=self.refresh_interval_secs)
+
+
+if __name__ == '__main__':
+    def float_greater_than(x):
+        value = float(x)
+        if value < MIN_REFRESH_INTERVAL:
+            raise argparse.ArgumentTypeError(
+                f'Refresh interval should be greater than or equal to {MIN_REFRESH_INTERVAL}')
+        return value
+
+    parser = argparse.ArgumentParser(description='Ceph Filesystem top utility')
+    parser.add_argument('--cluster', nargs='?', const='ceph', default='ceph',
+                        help='Ceph cluster to connect (default: ceph)')
+    parser.add_argument('--id', nargs='?', const='admin', default='admin',
+                        help='Ceph user to use to connection (default: admin)')
+    parser.add_argument('--conffile', nargs='?', default=None,
+                        help='Path to cluster configuration file')
+    parser.add_argument('--selftest', dest='selftest', action='store_true',
+                        help='Run in selftest mode')
+    parser.add_argument('-d', '--delay', nargs='?', default=DEFAULT_REFRESH_INTERVAL,
+                        type=float_greater_than, help='Interval to refresh data '
+                        f'(default: {DEFAULT_REFRESH_INTERVAL})')
+    parser.add_argument('-t', '--top', nargs='?', default=None,
+                        type=int, help='Display top N clients')
+
+    args = parser.parse_args()
+    err = False
+    iostat = IOStat(args)
+    try:
+        iostat.init()
+        if args.selftest:
+            iostat.selftest()
+        else:
+            iostat.run_display()
+    except IOStatException as fst:
+        err = True
+        sys.stderr.write(f'{fst.get_error_msg()}\n')
+    except Exception as e:
+        err = True
+        sys.stderr.write(f'exception: {e}\n')
+    finally:
+        iostat.fini()
+    sys.exit(0 if not err else -1)
