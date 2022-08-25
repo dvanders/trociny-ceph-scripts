@@ -19,7 +19,9 @@ cephfs_data_scan() {
     test -n "$2"
     local worker="$2"
 
-    cephfs-data-scan "${cmd}" --worker_n "${worker}" --worker_m "${NWORKERS}" "${DATAPOOL}"  2>&1 | tee cephfs-data-scan."${cmd}"."${worker}".log
+    cephfs-data-scan "${cmd}" --worker_n "${worker}" --worker_m "${NWORKERS}" \
+		     --filesystem "${CEPHFS}" "${DATAPOOL}"  2>&1 |
+	tee cephfs-data-scan."${cmd}"."${worker}".log
     echo "${cmd} ${worker} complete" >&2
 }
 
