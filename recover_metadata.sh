@@ -13,8 +13,7 @@ CEPHFS=
 DATAPOOL=
 NRANKS=1
 NWORKERS=16
-NOPROGRESS=
-WAIT_SLEEP_INTERVAL=60
+WAIT_SLEEP_INTERVAL=10
 LOGDIR=recover_metadata_logs
 
 #
@@ -39,8 +38,10 @@ check_deps() {
 }
 
 prepare_log_dir() {
+    test -n "${LOGDIR}"
+
     mkdir -p "${LOGDIR}"
-    rm -f "${LOGDIR}"/*.log
+    rm -f "${LOGDIR}"/*.log "${LOGDIR}"/*.dat
 }
 
 get_datapool() {
@@ -66,8 +67,8 @@ cephfs_data_scan() {
     local worker="$2"
 
     cephfs-data-scan "${cmd}" --worker_n "${worker}" --worker_m "${NWORKERS}" \
-		     --filesystem "${CEPHFS}" --debug-mds 10 "${DATAPOOL}" \
-		     > "${LOGDIR}"/cephfs-data-scan."${cmd}"."${worker}".log 2>&1
+		     --filesystem "${CEPHFS}" --debug-mds 10 "${DATAPOOL}" 2>&1 |
+	tee "${LOGDIR}"/cephfs-data-scan."${cmd}"."${worker}".log
     echo "${cmd} ${worker} complete" >&2
 }
 
@@ -76,7 +77,34 @@ scan_extents() {
 
     local worker="$1"
 
-    cephfs_data_scan scan_extents "${worker}"
+    cephfs_data_scan scan_extents "${worker}" |
+    awk -v f=${LOGDIR}/num_scan_extents.${worker}.dat \
+	-v f0=${LOGDIR}/num_0_scan_extents.${worker}.dat \
+    '
+        BEGIN {
+            n = n0 = 0
+            print(n) > f; close(f)
+            print(n0) > f0; close(0)
+        }
+
+        /handling object/ {
+            n++
+        }
+
+        /handling object [0-9a0-f]*\.0$/ {
+                n0++
+        }
+
+        n % 1000 == 0 {
+            print(n) > f; close(f)
+            print(n0) > f0; close(f0)
+        }
+
+        END {
+            print(n) > f; close(f)
+            print(n0) > f0; close(f0)
+        }
+    '
 }
 
 scan_inodes() {
@@ -84,7 +112,26 @@ scan_inodes() {
 
     local worker="$1"
 
-    cephfs_data_scan scan_inodes "${worker}"
+    cephfs_data_scan scan_inodes "${worker}" |
+    awk -v f=${LOGDIR}/num_scan_inodes.${worker}.dat \
+    '
+        BEGIN {
+            n = 0
+            print(n) > f; close(f)
+        }
+
+        /handling object/ {
+            n++
+        }
+
+        n % 1000 == 0 {
+            print(n) > f; close(f)
+        }
+
+        END {
+            print(n) > f; close(f)
+        }
+    '
 }
 
 wait_scan_extents_complete() {
@@ -93,46 +140,38 @@ wait_scan_extents_complete() {
     objnum=$(ceph df --format json |
 		 jq -r '.pools[] | select(.name == "'${DATAPOOL}'").stats.objects')
 
-    if [ -n "${NOPROGRESS}" -o -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+    if [ -z "${objnum}" -o "${objnum}" -eq 0 ]; then
 	wait
 	return
     fi
 
-    while true; do
-	sobjnum=$(grep -c 'handling object' "${LOGDIR}"/cephfs-data-scan.scan_extents.*.log |
-		      awk -F: '{s += $2} END{print s}')
+    while sleep ${WAIT_SLEEP_INTERVAL}; do
+	sobjnum=$(awk '{s += $1} END{print s}' "${LOGDIR}"/num_scan_extents.*.dat)
 	test -n "${sobjnum}" || sobjnum=0
 	echo "${sobjnum}/${objnum} objects ($((100 * sobjnum / objnum))%) processed" >&2
 
 	jobs > "${LOGDIR}"/jobs
 	test $(wc -l < "${LOGDIR}"/jobs) -eq 0 && break
-
-	sleep ${WAIT_SLEEP_INTERVAL}
     done
 }
 
 wait_scan_inodes_complete() {
     local objnum sobjnum
 
-    test -z "${NOPROGRESS}" &&
-    objnum=$(grep -c 'handling object [0-9a0-f]*\.0$' "${LOGDIR}"/cephfs-data-scan.scan_extents.*.log |
-		 awk -F: '{s += $2} END{print s}')
+    objnum=$(awk '{s += $1} END{print s}' "${LOGDIR}"/num_0_scan_extents.*.dat)
 
-    if [ -n "${NOPROGRESS}" -o -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+    if [ -z "${objnum}" -o "${objnum}" -eq 0 ]; then
 	wait
 	return
     fi
 
-    while true; do
-	sobjnum=$(grep -c 'handling object' "${LOGDIR}"/cephfs-data-scan.scan_inodes.*.log |
-		      awk -F: '{s += $2} END{print s}')
+    while sleep ${WAIT_SLEEP_INTERVAL}; do
+	sobjnum=$(awk '{s += $1} END{print s}' "${LOGDIR}"/num_scan_inodes.*.dat)
 	test -n "${sobjnum}" || sobjnum=0
 	echo "${sobjnum}/${objnum} objects ($((100 * sobjnum / objnum))%) processed" >&2
 
 	jobs > "${LOGDIR}"/jobs
 	test $(wc -l < "${LOGDIR}"/jobs) -eq 0 && break
-
-	sleep ${WAIT_SLEEP_INTERVAL}
     done
 }
 
