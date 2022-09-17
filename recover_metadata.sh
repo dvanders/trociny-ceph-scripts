@@ -13,6 +13,9 @@ CEPHFS=
 DATAPOOL=
 NRANKS=1
 NWORKERS=16
+NOPROGRESS=
+WAIT_SLEEP_INTERVAL=60
+LOGDIR=recover_metadata_logs
 
 #
 # Uncomment for NOP testing:
@@ -28,14 +31,31 @@ usage() {
     echo "$0 <cephfs> [nranks [nworkers]]"
 }
 
+check_deps() {
+    if ! which jq >/dev/null 2>&1; then
+	echo 'jq is not installed' >&2
+	return 1
+    fi
+}
+
+prepare_log_dir() {
+    mkdir -p "${LOGDIR}"
+    rm -f "${LOGDIR}"/*.log
+}
+
 get_datapool() {
     # TODO: support multiple data pools
-    DATAPOOLID=$(ceph fs get ${CEPHFS} |
-		     sed -nEe 's/^data_pools[ \t]*\[([0-9]*)].*/\1/p')
-    test -n "${DATAPOOLID}" -a "${DATAPOOLID}" -gt 0
+    DATAPOOLID=$(ceph fs get ${CEPHFS} --format json | jq '.mdsmap.data_pools[]')
+    if ! [ -n "${DATAPOOLID}" -a "${DATAPOOLID}" -gt 0 ]; then
+	echo "failed to get datapoolid for fs ${CEPHFS}: ${DATAPOOLID}" 2>&2
+	return 1
+    fi
 
     DATAPOOL=$(ceph df | awk '$2 == '${DATAPOOLID}' {print $1}')
-    test -n "${DATAPOOL}"
+    if ! [ -n "${DATAPOOL}" ]; then
+	echo "failed to get datapool for datapoolid ${DATAPOOLID}" 2>&2
+	return 1
+    fi
 }
 
 cephfs_data_scan() {
@@ -46,8 +66,8 @@ cephfs_data_scan() {
     local worker="$2"
 
     cephfs-data-scan "${cmd}" --worker_n "${worker}" --worker_m "${NWORKERS}" \
-		     --filesystem "${CEPHFS}" "${DATAPOOL}"  2>&1 |
-	tee cephfs-data-scan."${cmd}"."${worker}".log
+		     --filesystem "${CEPHFS}" --debug-mds 10 "${DATAPOOL}" \
+		     > "${LOGDIR}"/cephfs-data-scan."${cmd}"."${worker}".log 2>&1
     echo "${cmd} ${worker} complete" >&2
 }
 
@@ -67,13 +87,63 @@ scan_inodes() {
     cephfs_data_scan scan_inodes "${worker}"
 }
 
+wait_scan_extents_complete() {
+    local objnum sobjnum
+
+    objnum=$(ceph df --format json |
+		 jq -r '.pools[] | select(.name == "'${DATAPOOL}'").stats.objects')
+
+    if [ -n "${NOPROGRESS}" -o -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+	wait
+	return
+    fi
+
+    while true; do
+	sobjnum=$(grep -c 'handling object' "${LOGDIR}"/cephfs-data-scan.scan_extents.*.log |
+		      awk -F: '{s += $2} END{print s}')
+	test -n "${sobjnum}" || sobjnum=0
+	echo "${sobjnum}/${objnum} objects ($((100 * sobjnum / objnum))%) processed" >&2
+
+	jobs > "${LOGDIR}"/jobs
+	test $(wc -l < "${LOGDIR}"/jobs) -eq 0 && break
+
+	sleep ${WAIT_SLEEP_INTERVAL}
+    done
+}
+
+wait_scan_inodes_complete() {
+    local objnum sobjnum
+
+    test -z "${NOPROGRESS}" &&
+    objnum=$(grep -c 'handling object [0-9a0-f]*\.0$' "${LOGDIR}"/cephfs-data-scan.scan_extents.*.log |
+		 awk -F: '{s += $2} END{print s}')
+
+    if [ -n "${NOPROGRESS}" -o -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+	wait
+	return
+    fi
+
+    while true; do
+	sobjnum=$(grep -c 'handling object' "${LOGDIR}"/cephfs-data-scan.scan_inodes.*.log |
+		      awk -F: '{s += $2} END{print s}')
+	test -n "${sobjnum}" || sobjnum=0
+	echo "${sobjnum}/${objnum} objects ($((100 * sobjnum / objnum))%) processed" >&2
+
+	jobs > "${LOGDIR}"/jobs
+	test $(wc -l < "${LOGDIR}"/jobs) -eq 0 && break
+
+	sleep ${WAIT_SLEEP_INTERVAL}
+    done
+}
 
 #
 # Main
 #
 
+check_deps
+
 case $1 in
-    "-h|--help")
+    --help|-h)
 	usage
 	exit 0
         ;;
@@ -86,16 +156,23 @@ case $1 in
         ;;
 esac
 
-# TODO: improve logging so we don't need to use `set -x`
-set -x
-
 test -n "$2" && NRANKS="$2"
-test ${NRANKS} -gt 0
+if ! [ ${NRANKS} -gt 0 ]; then
+    echo "invalid nranks: ${NRANKS}" 2>&2
+    usage >&2
+    exit 1
+fi
 
 test -n "$3" && NWORKERS="$3"
-test ${NWORKERS} -gt 0 -a ${NWORKERS} -le 512
+if ! [ ${NWORKERS} -gt 0 -a ${NWORKERS} -le 512 ]; then
+    echo "invalid nworkers: ${NWORKERS}" 2>&2
+    usage >&2
+    exit 1
+fi
 
 get_datapool
+
+prepare_log_dir
 
 echo "INITIALIZING METADATA" >&2
 
@@ -137,8 +214,8 @@ echo "SCANNING EXTENTS" >&2
 for worker in `seq 0 $((NWORKERS - 1))`; do
     scan_extents ${worker} &
 done
+wait_scan_extents_complete
 
-wait
 echo "SCANNING EXTENTS DONE" >&2
 
 echo "SCANNING INODES" >&2
@@ -152,8 +229,8 @@ echo "SCANNING INODES" >&2
 for worker in `seq 0 $((NWORKERS - 1))`; do
     scan_inodes ${worker} &
 done
+wait_scan_inodes_complete
 
-wait
 echo "SCANNING INODES DONE" >&2
 
 echo "SCANNING LINKS" >&2
@@ -164,13 +241,15 @@ echo "SCANNING LINKS" >&2
 # inode, the ref count is increased for the inode it reffers to.  On
 # the second step (CHECK_LINK) it resolves found dups and other
 # inconsitencies.
-cephfs-data-scan scan_links --filesystem "${CEPHFS}"
+cephfs-data-scan scan_links --filesystem "${CEPHFS}" --debug-mds 10 \
+		 > "${LOGDIR}"/cephfs-data-scan.scan_links.0.log 2>&1
 
 echo "SCANNING LINKS DONE" >&2
 
 echo "CLEANUP" >&2
 
 # Delete ancillary data generated during recovery (xattrs).
-cephfs-data-scan cleanup --filesystem "${CEPHFS}" "${DATAPOOL}"
+cephfs-data-scan cleanup --filesystem "${CEPHFS}" --debug-mds 10 "${DATAPOOL}" \
+		 > "${LOGDIR}"/cephfs-data-scan.cleanup.0.log 2>&1
 
 echo "OK" >&2
