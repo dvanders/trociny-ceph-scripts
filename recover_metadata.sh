@@ -10,11 +10,13 @@
 # Globals
 #
 CEPHFS=
+METADATAPOOL=
 DATAPOOL=
 NRANKS=1
 NWORKERS=16
 WAIT_SLEEP_INTERVAL=10
 LOGDIR=recover_metadata_logs
+: ${PROCESS_SCAN_LINK_LOG:=}
 
 #
 # Uncomment for NOP testing:
@@ -42,6 +44,22 @@ prepare_log_dir() {
 
     mkdir -p "${LOGDIR}"
     rm -f "${LOGDIR}"/*.log "${LOGDIR}"/*.dat
+}
+
+get_metadatapool() {
+    # TODO: support multiple data pools
+    METADATAPOOLID=$(ceph fs get ${CEPHFS} --format json |
+			 jq '.mdsmap.metadata_pool')
+    if ! [ -n "${METADATAPOOLID}" -a "${METADATAPOOLID}" -gt 0 ]; then
+	echo "failed to get metadatapoolid for fs ${CEPHFS}: ${METADATAPOOLID}" 2>&2
+	return 1
+    fi
+
+    METADATAPOOL=$(ceph df | awk '$2 == '${METADATAPOOLID}' {print $1}')
+    if ! [ -n "${METADATAPOOL}" ]; then
+	echo "failed to get datapool for datapoolid ${METADATAPOOLID}" 2>&2
+	return 1
+    fi
 }
 
 get_datapool() {
@@ -134,13 +152,58 @@ scan_inodes() {
     '
 }
 
+scan_links() {
+    cephfs-data-scan scan_links --filesystem "${CEPHFS}" --debug-mds 10 2>&1 |
+    tee "${LOGDIR}"/cephfs-data-scan.scan_links.0.log |
+    awk -v f=${LOGDIR}/num_scan_links.0.dat \
+	-v d=${LOGDIR}/num_scan_links_dups.dat \
+	-v r=${LOGDIR}/num_scan_links_rem_dups.dat \
+	-v b=${LOGDIR}/num_scan_links_bad.dat \
+	-v i=${LOGDIR}/num_scan_links_injected.dat \
+    '
+        BEGIN {
+            n = 0
+            print(n) > f; close(f)
+        }
+
+        /handling object/ {
+            n++
+        }
+
+        n % 1000 == 0 {
+            print(n) > f; close(f)
+        }
+
+        /processing .* dup_primaries/ {
+            print(n) > f; close(f)
+	    sub(/^.*datascan.scan_links: /, "")
+	    print > d; close(d)
+        }
+
+	/removing dup dentries/ {
+	    sub(/^.*datascan.scan_links: /, "")
+	    print > r; close(r)
+	}
+
+	/processing .* bad_nlink_inos/ {
+	    sub(/^.*datascan.scan_links: /, "")
+	    print > b; close(b)
+	}
+
+	/processing .* injected_inos/ {
+	    sub(/^.*datascan.scan_links: /, "")
+	    print > i; close(i)
+	}
+    '
+}
+
 wait_scan_extents_complete() {
     local objnum sobjnum
 
     objnum=$(ceph df --format json |
 		 jq -r '.pools[] | select(.name == "'${DATAPOOL}'").stats.objects')
 
-    if [ -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+    if [ -z "${objnum}" ] || [ "${objnum}" -eq 0 ]; then
 	wait
 	return
     fi
@@ -160,7 +223,7 @@ wait_scan_inodes_complete() {
 
     objnum=$(awk '{s += $1} END{print s}' "${LOGDIR}"/num_0_scan_extents.*.dat)
 
-    if [ -z "${objnum}" -o "${objnum}" -eq 0 ]; then
+    if [ -z "${objnum}" ] || [ "${objnum}" -eq 0 ]; then
 	wait
 	return
     fi
@@ -172,6 +235,62 @@ wait_scan_inodes_complete() {
 
 	jobs > "${LOGDIR}"/jobs
 	test $(wc -l < "${LOGDIR}"/jobs) -eq 0 && break
+    done
+}
+
+wait_scan_links_complete() {
+    local objnum sobjnum
+    local scan_done dup_done rem_dup_done bad_done
+
+    test -n "${PROCESS_SCAN_LINK_LOG}" &&
+    objnum=$(ceph df --format json |
+		 jq -r '.pools[] | select(.name == "'${METADATAPOOL}'").stats.objects')
+
+    if [ -z "${objnum}" ] || [ "${objnum}" -eq 0 ]; then
+	wait
+	return
+    fi
+
+    # scan_links scans metadata objects twice
+    objnum=$((objnum * 2))
+
+    while sleep ${WAIT_SLEEP_INTERVAL}; do
+	if [ -n "${bad_done}" ]; then
+	    test -f ${LOGDIR}/num_scan_links_injected.dat || continue
+	    cat ${LOGDIR}/num_scan_links_injected.dat >&2
+	    wait
+	    break
+	fi
+
+	if [ -n "${rem_dup_done}" ]; then
+	    if [ -f ${LOGDIR}/num_scan_links_bad.dat ]; then
+		cat ${LOGDIR}/num_scan_links_bad.dat >&2
+		bad_done=1
+	    fi
+	    continue
+	fi
+
+	if [ -n "${dup_done}" ]; then
+	    if [ -f ${LOGDIR}/num_scan_links_rem_dups.dat ]; then
+		cat ${LOGDIR}/num_scan_links_rem_dups.dat >&2
+		rem_dup_done=1
+	    fi
+	    continue
+	fi
+
+	if [ -n "${scan_done}" ]; then
+	    cat ${LOGDIR}/num_scan_links_dups.dat >&2
+	    dup_done=1
+	    continue
+	fi
+
+	sobjnum=$(awk '{s += $1} END{print s}' "${LOGDIR}"/num_scan_links.*.dat)
+	test -n "${sobjnum}" || sobjnum=0
+	echo "${sobjnum}/${objnum} objects ($((100 * sobjnum / objnum))%) processed" >&2
+
+	if [ -f ${LOGDIR}/num_scan_links_dups.dat ]; then
+	    scan_done=1
+	fi
     done
 }
 
@@ -209,8 +328,8 @@ if ! [ ${NWORKERS} -gt 0 -a ${NWORKERS} -le 512 ]; then
     exit 1
 fi
 
+get_metadatapool
 get_datapool
-
 prepare_log_dir
 
 echo "INITIALIZING METADATA" >&2
@@ -249,7 +368,6 @@ echo "SCANNING EXTENTS" >&2
 # highest ID seen), and the inode mtime
 #
 # NOTE: this logic doesn't take account of striping.
-#
 for worker in `seq 0 $((NWORKERS - 1))`; do
     scan_extents ${worker} &
 done
@@ -280,8 +398,8 @@ echo "SCANNING LINKS" >&2
 # inode, the ref count is increased for the inode it reffers to.  On
 # the second step (CHECK_LINK) it resolves found dups and other
 # inconsitencies.
-cephfs-data-scan scan_links --filesystem "${CEPHFS}" --debug-mds 10 \
-		 > "${LOGDIR}"/cephfs-data-scan.scan_links.0.log 2>&1
+scan_links &
+wait_scan_links_complete
 
 echo "SCANNING LINKS DONE" >&2
 
