@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ceph-nvmeof
+  namespace: rook-ceph # namespace:cluster
+  labels:
+    app: ceph-nvmeof
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ceph-nvmeof
+  template:
+    metadata:
+      labels:
+        app: ceph-nvmeof
+    spec:
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: ceph-nvmeof
+          image: trociny/ceph:ceph-nvmeof
+          command: ["/bin/bash"]
+          args: ["-m", "-c", "/app/bootstrap.sh"]
+          imagePullPolicy: Always
+          tty: true
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: false
+          env:
+            - name: ROOK_CEPH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-mon
+                  key: ceph-username
+            - name: ROOK_CEPH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-mon
+                  key: ceph-secret
+          volumeMounts:
+            - mountPath: /etc/ceph
+              name: ceph-config
+            - name: mon-endpoint-volume
+              mountPath: /etc/rook
+            - mountPath: /hugepages
+              name: hugepage
+            - mountPath: /dev/shm
+              name: dshm
+          resources:
+            limits:
+              hugepages-2Mi: 8192Mi
+              memory: 64Gi
+            requests:
+              memory: 64Gi
+      volumes:
+        - name: mon-endpoint-volume
+          configMap:
+            name: rook-ceph-mon-endpoints
+            items:
+              - key: data
+                path: mon-endpoints
+        - name: ceph-config
+          emptyDir: {}
+        - name: devices
+          hostPath:
+            path: /dev
+        - name: hugepage
+          emptyDir:
+            medium: HugePages
+        - name: dshm
+          emptyDir:
+            medium: Memory
+      tolerations:
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 5
