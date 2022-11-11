@@ -1,4 +1,4 @@
-#!/bin/sh -ex
+#!/bin/sh -e
 #
 # The script can be used to restart/start a rook-ceph osd pod without
 # osd process running (e.g. when the pod fails to run due to the osd
@@ -60,7 +60,15 @@ patch_deployment() {
     kubectl -n ${NAMESPACE} patch deployment rook-ceph-osd-${id} \
 	    -p '{"spec": {"template": {"spec": {"containers": [{"name": "osd", "command": ["sleep", "infinity"], "args": []}]}}}}'
 
+    # wait for restart complete
     kubectl -n ${NAMESPACE} wait --for=condition=Progressing deployment/rook-ceph-osd-${id}
+    for i in `seq 60`; do
+	kubectl -n rook-ceph exec -it deploy/rook-ceph-osd-${id} -- \
+		ps auxww 2>/dev/null | grep -q 'sleep infinity' && return
+	sleep 1
+    done
+
+    return 1
 }
 
 pod_exec() {
@@ -97,6 +105,8 @@ if ! echo $id  | grep -Eq "^[0-9]+$" ; then
 fi
 
 shift
+
+#set -x
 
 TEMPDIR=`mktemp -d`
 
