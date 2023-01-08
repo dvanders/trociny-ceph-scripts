@@ -345,7 +345,7 @@ for rank in `seq 0 $((NRANKS - 1))`; do
     cephfs-table-tool ${CEPHFS}:${rank} reset inode
 
     # reset journal
-    cephfs-journal-tool --rank=${CEPHFS}:${rank} journal reset
+    cephfs-journal-tool --rank=${CEPHFS}:${rank} journal reset --force
 done
 
 # Regenareate root inodes ("/" and MDS directory) if missing
