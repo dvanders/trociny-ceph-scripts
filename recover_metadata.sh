@@ -12,6 +12,7 @@
 CEPHFS=
 METADATAPOOL=
 DATAPOOL=
+EXTRA_DATAPOOLS=
 NRANKS=1
 NWORKERS=16
 WAIT_SLEEP_INTERVAL=10
@@ -62,30 +63,49 @@ get_metadatapool() {
     fi
 }
 
-get_datapool() {
-    # TODO: support multiple data pools
-    DATAPOOLID=$(ceph fs get ${CEPHFS} --format json | jq '.mdsmap.data_pools[]')
-    if ! [ -n "${DATAPOOLID}" -a "${DATAPOOLID}" -gt 0 ]; then
-	echo "failed to get datapoolid for fs ${CEPHFS}: ${DATAPOOLID}" 2>&2
+get_datapools() {
+    local id datapool
+
+    DATAPOOLIDS="$(ceph fs get ${CEPHFS} --format json | jq '.mdsmap.data_pools[]')"
+    if [ -z "${DATAPOOLIDS}" ]; then
+	echo "failed to get datapoolid for fs ${CEPHFS}: ${DATAPOOLIDS}" 2>&2
 	return 1
     fi
 
-    DATAPOOL=$(ceph df | awk '$2 == '${DATAPOOLID}' {print $1}')
-    if ! [ -n "${DATAPOOL}" ]; then
-	echo "failed to get datapool for datapoolid ${DATAPOOLID}" 2>&2
-	return 1
-    fi
+    for id in ${DATAPOOLIDS}; do
+	if [ ${id} -le 0 ]; then
+	    echo "invalid datapool id for fs ${CEPHFS}: ${id}" 2>&2
+	    return 1
+	fi
+	datapool=$(ceph df | awk '$2 == '${id}' {print $1}')
+	if [ -z "${datapool}" ]; then
+	    echo "failed to get datapool for datapoolid ${id}" 2>&2
+	    return 1
+	fi
+	if [ -z "${DATAPOOL}" ]; then
+	    DATAPOOL=${datapool}
+	elif [ -z "${EXTRA_DATAPOOLS}" ]; then
+	    EXTRA_DATAPOOLS=${datapool}
+	else
+	    EXTRA_DATAPOOLS="${EXTRA_DATAPOOLS} ${datapool}"
+	fi
+    done
 }
 
 cephfs_data_scan() {
     test -n "$1"
     local cmd="$1"
+    local datapools="${DATAPOOL}"
 
     test -n "$2"
     local worker="$2"
 
+    if [ "${cmd}" = "scan_extents" -a -n "${EXTRA_DATAPOOLS}" ]; then
+	datapools="${datapools} ${EXTRA_DATAPOOLS}"
+    fi
+
     cephfs-data-scan "${cmd}" --worker_n "${worker}" --worker_m "${NWORKERS}" \
-		     --filesystem "${CEPHFS}" --debug-mds 10 "${DATAPOOL}" 2>&1 |
+		     --filesystem "${CEPHFS}" --debug-mds 10 ${datapools} 2>&1 |
 	tee "${LOGDIR}"/cephfs-data-scan."${cmd}"."${worker}".log
     echo "${cmd} ${worker} complete" >&2
 }
@@ -329,7 +349,7 @@ if ! [ ${NWORKERS} -gt 0 -a ${NWORKERS} -le 512 ]; then
 fi
 
 get_metadatapool
-get_datapool
+get_datapools
 prepare_log_dir
 
 echo "INITIALIZING METADATA" >&2
