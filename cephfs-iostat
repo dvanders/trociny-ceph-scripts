@@ -87,6 +87,27 @@ def calc_kbps(c, p, duration):
         return 0.0
     return round((c[1] - p[1]) / 1024 / duration, 2)
 
+def calc_hitsps(c, p, duration):
+    assert(duration > 0)
+    if c[0] < p[0]:
+        return 0.0
+    return round((c[0] - p[0]) / duration, 2)
+
+def calc_missesps(c, p, duration):
+    assert(duration > 0)
+    if c[1] < p[1]:
+        return 0.0
+    return round((c[1] - p[1]) / duration, 2)
+
+def calc_avg_latency(l_c, l_p, i_c, i_p):
+    l_c_msec = (l_c[0] * 10**9 + l_c[1]) / 10**6
+    l_p_msec = (l_p[0] * 10**9 + l_p[1]) / 10**6
+    if l_c_msec < l_p_msec:
+        return 0.0
+    if i_c[0] <= i_p[0]:
+        return 0.0
+    return round((l_c_msec - l_p_msec) / (i_c[0] - i_p[0]), 2)
+
 class IOStat(object):
     def __init__(self, args):
         self.rados = None
@@ -95,6 +116,7 @@ class IOStat(object):
         self.conffile = args.conffile
         self.refresh_interval_secs = args.delay
         self.ntop = args.top
+        self.extended = args.extended
         self.exit_ev = Event()
         self.last_metrics = None
         self.last_time = None
@@ -207,16 +229,34 @@ class IOStat(object):
                                  duration)
             s['rkB/s'] = calc_kbps(cstats['READ_IO_SIZES'], pstats['READ_IO_SIZES'],
                                    duration)
+            s['r_lat'] = calc_avg_latency(cstats['READ_LATENCY'], pstats['READ_LATENCY'],
+                                          cstats['READ_IO_SIZES'], pstats['READ_IO_SIZES'])
             s['w/s'] = calc_iops(cstats['WRITE_IO_SIZES'], pstats['WRITE_IO_SIZES'],
                                  duration)
             s['wkB/s'] = calc_kbps(cstats['WRITE_IO_SIZES'], pstats['WRITE_IO_SIZES'],
                                    duration)
+            s['w_lat'] = calc_avg_latency(cstats['WRITE_LATENCY'], pstats['WRITE_LATENCY'],
+                                          cstats['WRITE_IO_SIZES'], pstats['WRITE_IO_SIZES'])
+            s['cap_h/s'] = calc_hitsps(cstats['CAP_HIT'], pstats['CAP_HIT'],
+                                       duration)
+            s['cap_m/s'] = calc_missesps(cstats['CAP_HIT'], pstats['CAP_HIT'],
+                                         duration)
+            s['dl_h/s'] = calc_hitsps(cstats['DENTRY_LEASE'], pstats['DENTRY_LEASE'],
+                                       duration)
+            s['dl_m/s'] = calc_missesps(cstats['DENTRY_LEASE'], pstats['DENTRY_LEASE'],
+                                        duration)
             s['sort'] = s['r/s'] + s['w/s']
         else:
             s['r/s'] = None
             s['rkB/s'] = None
+            s['r_lat'] = None
             s['w/s'] = None
             s['wkB/s'] = None
+            s['w_lat'] = None
+            s['cap_h/s'] = None
+            s['cap_m/s'] = None
+            s['dl_h/s'] = None
+            s['dl_m/s'] = None
             s['sort'] = 0
 
         return s
@@ -248,7 +288,16 @@ class IOStat(object):
             if self.ntop < len(client_stats):
                 client_stats = client_stats[:self.ntop]
 
-        column_names = ('client', 'mount_root', 'oicaps', 'r/s', 'rkB/s', 'w/s', 'wkB/s')
+        if self.extended:
+            column_names = ('client', 'mount_root', 'oicaps',
+                            'r/s', 'rkB/s', 'r_lat',
+                            'w/s', 'wkB/s', 'w_lat',
+                            'cap_h/s', 'cap_m/s',
+                            'dl_h/s', 'dl_m/s')
+        else:
+            column_names = ('client', 'mount_root', 'oicaps',
+                            'r/s', 'rkB/s',
+                            'w/s', 'wkB/s')
         tbl = PrettyTable()
         tbl.set_style(PLAIN_COLUMNS)
         tbl.field_names = column_names
@@ -293,6 +342,8 @@ if __name__ == '__main__':
                         f'(default: {DEFAULT_REFRESH_INTERVAL})')
     parser.add_argument('-t', '--top', nargs='?', default=None,
                         type=int, help='Display top N clients')
+    parser.add_argument('-x', '--extended', dest='extended', action='store_true',
+                        help='Extended output')
 
     args = parser.parse_args()
     err = False
