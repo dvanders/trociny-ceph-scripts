@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import rados
+import signal
+import sys
+
+from datetime import datetime
+from threading import RLock, Thread
+
+#
+# Global
+#
+
+cmd_description='run a rados command for many objects'
+
+parser = argparse.ArgumentParser(prog='rados-bulk', description=cmd_description)
+parser.add_argument(
+    'command',
+    metavar='put|get|rm',
+    help='rados command',
+    nargs=1,
+)
+parser.add_argument(
+    'objects',
+    metavar='object',
+    help='objects',
+    nargs='*',
+)
+parser.add_argument(
+    '-p', '--pool',
+    metavar='pool',
+    help='pool',
+    required=True,
+)
+parser.add_argument(
+    '-N', '--namespace',
+    metavar='namespace',
+    help='namespace',
+    default='',
+)
+parser.add_argument(
+    '-d', '--object-dir',
+    metavar='dir',
+    help='object directory',
+    default='.',
+)
+parser.add_argument(
+    '-l', '--object-list',
+    metavar='file',
+    help='object list',
+    default='-',
+)
+parser.add_argument(
+    '-w', '--workers',
+    metavar='N',
+    help='number of workers',
+    type=int,
+    default=1,
+)
+parser.add_argument(
+    '-s', '--status-output',
+    metavar='file',
+    help='status output (default: stderr)',
+    default=None,
+)
+parser.add_argument(
+    '-i', '--ignore-rados-errors',
+    help='continue on rados error',
+    action='store_true',
+    default=False,
+)
+parser.add_argument(
+    '-n', '--dry-run',
+    help='do not do any changes, just print what would be done',
+    action='store_true',
+    default=False,
+)
+
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+class StatusOutput:
+    """
+    Status output class
+    """
+
+    def __init__(self, status_output):
+        self.status_output = status_output
+
+    def print(self, msg):
+        print(f'{datetime.now().strftime("%F %H:%M:%S")} {msg}',
+            file=self.status_output,
+            flush=True,
+        )
+
+
+class ObjectIter:
+    """
+    Iterator for objects.
+    """
+
+    lock = RLock()
+
+    def __init__(self):
+        self.objects = self._get_objects()
+        self.i = 0
+        self.interrupted = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self.lock:
+            if self.interrupted:
+                raise StopIteration
+
+            if self.i < len(self.objects):
+                self.i += 1
+                return self.objects[self.i - 1]
+            else:
+                raise StopIteration
+
+    def interrupt(self):
+        with self.lock:
+            self.interrupted = True
+
+class ListIter(ObjectIter):
+    """
+    Iterator for objects in a list.
+    """
+
+    def __init__(self, objects):
+        self.objects = objects
+        super().__init__()
+
+    def _get_objects(self):
+        return self.objects
+
+
+class ListDirIter(ObjectIter):
+    """
+    Iterator for objects in a directory.
+    """
+
+    def __init__(self, object_dir):
+        self.object_dir = object_dir
+        super().__init__()
+
+    def _get_objects(self):
+        return os.listdir(self.object_dir)
+
+
+class ReadFileIter(ObjectIter):
+    """
+    Iterator for objects in a file.
+    """
+
+    def __init__(self, object_list):
+        self.object_list = object_list
+        super().__init__()
+
+    def _get_objects(self):
+        if self.object_list == '-':
+            return sys.stdin.read().splitlines()
+        else:
+            with open(self.object_list, 'r') as f:
+                return f.read().splitlines()
+
+
+class Worker(Thread):
+    """
+    Worker thread that runs rados command for objects.
+    """
+
+    def __init__(self, command, ioctx, objects, status_output, object_dir,
+                 ignore_rados_errors, dry_run):
+        Thread.__init__(self)
+        self.command = command
+        self.ioctx = ioctx
+        self.objects = objects
+        self.status_output = status_output
+        self.object_dir = object_dir
+        self.ignore_rados_errors = ignore_rados_errors
+        self.dry_run = dry_run
+
+    def run(self):
+        for o in self.objects:
+            if self.dry_run:
+                self.print_status(f'dry run: would {self.command} {o}')
+                continue
+            self.print_status(f'{self.command} {o}')
+            try:
+                if self.command == 'put':
+                    self.put(o)
+                elif self.command == 'get':
+                    self.get(o)
+                elif self.command == 'rm':
+                    self.rm(o)
+                else:
+                    assert False
+            except rados.ObjectNotFound:
+                self.print_status(f'object {o} not found')
+            except rados.Error as e:
+                self.print_status(f'{self.command} {o} failed: {e}')
+                if not self.ignore_rados_errors:
+                    raise
+
+    def print_status(self, msg):
+        self.status_output.print(f'{self}: {msg}')
+
+    def put(self, oid):
+        with open(f'{self.object_dir}/{oid}', 'rb') as f:
+            data = f.read()
+        self.ioctx.write_full(oid, data)
+
+    def get(self, oid):
+        size = self.ioctx.stat(oid)[0]
+        data = self.ioctx.read(oid, size)
+        with open(f'{self.object_dir}/{oid}', 'wb') as f:
+            f.write(data)
+
+    def rm(self, oid):
+        self.ioctx.remove_object(oid)
+
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+    command = args.command[0]
+
+    if command not in ['put', 'get', 'rm']:
+        print(f'invalid command: {command}', file=sys.stderr)
+        exit(1)
+
+    if args.status_output:
+        status_output = StatusOutput(open(args.status_output, 'w'))
+    else:
+        status_output = StatusOutput(sys.stderr)
+
+    if command in ['put']:
+        objects = ListDirIter(args.object_dir)
+    else:
+        if args.objects:
+            objects = ListIter(args.objects)
+        else:
+            objects = ReadFileIter(args.object_list)
+
+    status_output.print(
+        f'Running {command} on pool {args.pool} with {args.workers} workers'
+    )
+
+    with rados.Rados(conffile="") as cluster:
+        ioctx =cluster.open_ioctx(args.pool)
+
+        workers = []
+        for i in range(args.workers):
+            w = Worker(command, ioctx, objects, status_output, args.object_dir,
+                       args.ignore_rados_errors, args.dry_run)
+            w.start()
+            workers.append(w)
+        def interrupt_handler(signum, frame):
+            status_output.print('*** Interrupted ***')
+            objects.interrupt()
+            for w in workers:
+                w.join()
+            sys.exit(1)
+        signal.signal(signal.SIGINT, interrupt_handler)
+        for w in workers:
+            w.join()
+
+
+#
+# main
+#
+
+main()
