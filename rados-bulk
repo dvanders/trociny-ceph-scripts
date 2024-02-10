@@ -264,6 +264,8 @@ def main():
 
     with rados.Rados(conffile="") as cluster:
         ioctx =cluster.open_ioctx(args.pool)
+        if args.namespace:
+            ioctx.set_namespace(args.namespace)
 
         workers = []
         for i in range(args.workers):
