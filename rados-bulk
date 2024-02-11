@@ -341,6 +341,11 @@ def main():
     else:
         log = Log(sys.stderr, args.verbose)
 
+    if command in ['get', 'put']:
+        if not os.path.isdir(args.object_dir):
+            log.error(f'object directory {args.object_dir} does not exist')
+            exit(1)
+
     if command in ['put']:
         objects = ListDirIter(args.object_dir)
     else:
