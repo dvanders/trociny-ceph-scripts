@@ -50,11 +50,18 @@ trap cleanup INT TERM EXIT
 setup
 
 rados -p ${POOL} ls > ${TEMPDIR}/objects.txt
+
+${RADOS_BULK} ${RADOS_BULK_OPTS} -p ${POOL} stat \
+	      --object-list ${TEMPDIR}/objects.txt
+
 split -l $((OBJECTS / 2 + RANDOM % (OBJECTS / 100 + 1))) \
       ${TEMPDIR}/objects.txt ${TEMPDIR}/objects.txt-
 test $(ls ${TEMPDIR}/objects.txt-* | wc -l) -eq 2
 test -f ${TEMPDIR}/objects.txt-aa
 test -f ${TEMPDIR}/objects.txt-ab
+
+${RADOS_BULK} ${RADOS_BULK_OPTS} -p ${POOL} stat \
+	      --object-list ${TEMPDIR}/objects.txt
 
 mkdir -p ${TEMPDIR}/objects
 
@@ -78,6 +85,13 @@ ${RADOS_BULK} ${RADOS_BULK_OPTS} -p ${POOL} rm \
 
 rados -p ${POOL} ls > ${TEMPDIR}/objects.1.txt
 cmp ${TEMPDIR}/objects.1.txt ${TEMPDIR}/objects.txt-ab
+
+${RADOS_BULK} ${RADOS_BULK_OPTS} -p ${POOL} stat \
+	      --object-list ${TEMPDIR}/objects.txt-aa 2>&1 |
+    tee ${TEMPDIR}/stat.log
+
+test $(grep -c 'not found' ${TEMPDIR}/stat.log) -eq \
+     $(cat ${TEMPDIR}/objects.txt-aa | wc -l)
 
 ${RADOS_BULK} ${RADOS_BULK_OPTS} -p ${POOL} put \
 	      --object-dir ${TEMPDIR}/objects

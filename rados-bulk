@@ -6,6 +6,7 @@ import os
 import rados
 import signal
 import sys
+import time
 
 from datetime import datetime
 from threading import Condition, Lock, RLock, Thread
@@ -19,7 +20,7 @@ cmd_description='run a rados command for many objects'
 parser = argparse.ArgumentParser(prog='rados-bulk', description=cmd_description)
 parser.add_argument(
     'command',
-    metavar='put|get|rm',
+    metavar='get|put|rm|stat',
     help='rados command',
     nargs=1,
 )
@@ -240,19 +241,21 @@ class Worker(Thread):
                     )
                     self.cond.notify()
                 if not self.ignore_rados_errors and \
-                   comp.get_return_value() not in (0, errno.ENOENT):
+                   comp.get_return_value() not in (0, -errno.ENOENT):
                     raise rados.OSError(f'{self.command} {o} failed',
                                         comp.get_return_value())
 
             self.log_info(f'{self.command} {o}')
             self.log_debug(f'{self.command} {o} (started) (inflight: {self.inflight})')
             try:
-                if self.command == 'put':
-                    self.put(o, cb)
-                elif self.command == 'get':
+                if self.command == 'get':
                     self.get(o, cb)
+                elif self.command == 'put':
+                    self.put(o, cb)
                 elif self.command == 'rm':
                     self.rm(o, cb)
+                elif self.command == 'stat':
+                    self.stat(o, cb)
                 else:
                     assert False
             except rados.ObjectNotFound:
@@ -281,11 +284,6 @@ class Worker(Thread):
     def log_debug(self, msg):
         self.log.debug(f'{self}: {msg}')
 
-    def put(self, oid, cb):
-        with open(f'{self.object_dir}/{oid}', 'rb') as f:
-            data = f.read()
-        self.ioctx.aio_write_full(oid, data, cb)
-
     def get(self, oid, cb):
         def get_size_cb(comp, size, mtime):
             if (comp.get_return_value() != 0):
@@ -308,8 +306,24 @@ class Worker(Thread):
 
         self.ioctx.aio_stat(oid, get_size_cb)
 
+    def put(self, oid, cb):
+        with open(f'{self.object_dir}/{oid}', 'rb') as f:
+            data = f.read()
+        self.ioctx.aio_write_full(oid, data, cb)
+
     def rm(self, oid, cb):
         self.ioctx.aio_remove(oid, cb)
+
+    def stat(self, oid, cb):
+        def stat_cb(comp, size, mtime):
+            if (comp.get_return_value() == 0):
+                mtime = time.strftime("%Y-%m-%d %H:%M:%S", mtime)
+                self.log_info(f'{oid} size: {size}, mtime: {mtime}')
+            elif (comp.get_return_value() == -errno.ENOENT):
+                self.log_info(f'{oid} not found')
+            cb(comp)
+
+        self.ioctx.aio_stat(oid, stat_cb)
 
 
 def main():
@@ -324,7 +338,7 @@ def main():
     args = parser.parse_args()
     command = args.command[0]
 
-    if command not in ['put', 'get', 'rm']:
+    if command not in ['get', 'put', 'rm', 'stat']:
         print(f'invalid command: {command}', file=sys.stderr)
         exit(1)
 
