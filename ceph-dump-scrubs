@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import prettytable
+import re
+import subprocess
+import sys
+
+from datetime import datetime
+
+#
+# Global
+#
+
+cmd_description='show scheduled scrubs'
+
+parser = argparse.ArgumentParser(prog='ceph-dump-scrubs',
+                                 description=cmd_description)
+parser.add_argument(
+    '-s', '--sort-by',
+    metavar='osd|pgid|sched_time|orig_sched_time|deadline|forced',
+    help='sort by specified field',
+    default='osd',
+    required=False,
+)
+parser.add_argument(
+    '-p', '--pool',
+    metavar='pool',
+    help='show scrubs for specified pool',
+    required=False,
+)
+parser.add_argument(
+    '-t', '--top',
+    metavar='n',
+    type=int,
+    help='show top n scrubs',
+    default=0,
+    required=False,
+)
+
+#
+# Functions
+#
+
+def description():
+    print(cmd_description)
+
+def help():
+    parser.print_help()
+
+def get_pool_id(pool):
+    result = subprocess.run(['ceph', 'osd', 'pool', 'stats', pool,
+                             '--format', 'json'],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True)
+    if result.returncode != 0:
+        print(f'ceph osd pool stats {pool} failed: {result.stderr}',
+              file=sys.stderr)
+        exit(1)
+    pool_stats = json.loads(result.stdout)
+    return pool_stats[0]['pool_id']
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] == 'description':
+            description()
+            exit(0)
+        elif sys.argv[1] == 'help':
+            help()
+            exit(0)
+
+    args = parser.parse_args()
+
+    pool_id = args.pool and get_pool_id(args.pool) or None
+    dump_scrubs = []
+
+    result = subprocess.run(['ceph', 'tell', 'osd.*', 'dump_scrubs',
+                             '--format', 'json'],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True)
+    if result.returncode != 0:
+        print(
+            f'ceph tell {daemon} dump_historic_ops failed: {result.stderr}',
+            file=sys.stderr
+        )
+        exit(1)
+
+    for line in result.stdout.split('\n'):
+        if not line:
+            continue
+        m = re.match(r'^(osd\..+): +(\[.*)$', line)
+        if not m:
+            print(f'skipping: {line}', file=sys.stderr)
+            continue
+        osd = m.group(1)
+        scrubs = json.loads(m.group(2))
+        dump_scrubs.extend([dict({'osd': osd}, **x) for x in scrubs])
+
+    fields = dump_scrubs[0].keys()
+    sort_by = args.sort_by
+
+    if sort_by not in fields:
+        if sort_by == 'orig_sched_time':
+            sort_by = 'sched_time'
+        else:
+            print(f'invalid sort-by: {sort_by}, using default', file=sys.stderr)
+            sort_by = 'osd'
+
+    if pool_id is not None:
+        pool_id = str(pool_id)
+        dump_scrubs = [
+            s for s in dump_scrubs if s['pgid'].split('.')[0] == pool_id
+        ]
+
+    if not dump_scrubs:
+        print('no scheduled scrubs', file=sys.stderr)
+        exit(0)
+
+    dump_scrubs.sort(key=lambda s: s[sort_by])
+
+    if args.top > 0:
+        dump_scrubs = dump_scrubs[:args.top]
+
+    table = prettytable.PrettyTable(tuple([f.upper() for f in fields]),
+                                    hrules=prettytable.HEADER,
+                                    vrules=prettytable.NONE)
+    table.left_padding_width = 1
+    table.right_padding_width = 0
+
+    for s in dump_scrubs:
+        row = []
+        for k,v in s.items():
+            if k in ('sched_time', 'orig_sched_time', 'deadline'):
+                v = datetime.strptime(
+                    v, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%b%d %H:%M')
+            elif k == 'forced':
+                v = v and 'yes' or 'no'
+            row.append(v)
+        table.add_row(row)
+    try:
+        print(table)
+    except BrokenPipeError:
+        pass
+
+#
+# main
+#
+
+main()
