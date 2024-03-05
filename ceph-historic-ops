@@ -54,7 +54,7 @@ def main():
             exit(0)
 
     args = parser.parse_args()
-    historic_ops = []    
+    historic_ops = []
 
     for daemon in args.daemon:
         m = re.match(r'^(mds|mon|osd)(\.(.+))?', daemon)
