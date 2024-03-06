@@ -21,8 +21,8 @@ parser = argparse.ArgumentParser(prog='ceph-dump-scrubs',
 parser.add_argument(
     '-s', '--sort-by',
     metavar='osd|pgid|sched_time|orig_sched_time|deadline|forced',
-    help='sort by specified field',
-    default='osd',
+    help='sort by specified field (default: %(default)s)',
+    default='deadline',
     required=False,
 )
 parser.add_argument(
@@ -135,8 +135,11 @@ def main():
         row = []
         for k,v in s.items():
             if k in ('sched_time', 'orig_sched_time', 'deadline'):
-                v = datetime.strptime(
-                    v, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%b%d %H:%M')
+                try:
+                    v = datetime.strptime(
+                        v, '%Y-%m-%dT%H:%M:%S.%f%z').strftime('%b%d %H:%M')
+                except ValueError:
+                    pass
             elif k == 'forced':
                 v = v and 'yes' or 'no'
             row.append(v)
