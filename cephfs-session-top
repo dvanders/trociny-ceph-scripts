@@ -57,8 +57,11 @@ def top(mds, N, sort_by):
     if mds.get('file'):
         print(f'File: {os.path.basename(mds["file"])}')
 
-        with open(mds['file'], 'r') as f:
-            sessions = json.load(f)
+        if mds['file'] == '-':
+            sessions = json.load(sys.stdin)
+        else:
+            with open(mds['file'], 'r') as f:
+                sessions = json.load(f)
     else:
         print(f'MDS: {mds["name"]}')
         print(f'Rank: {mds["rank"]}')
