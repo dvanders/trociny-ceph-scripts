@@ -30,6 +30,7 @@ parser.add_argument(
     '-f', '--file',
     metavar='file',
     help='process session list from file',
+    action='append',
     required=False,
 )
 parser.add_argument(
@@ -132,9 +133,12 @@ def main():
                 file=sys.stderr
             )
             exit(1)
-        mds.append(
-            {'file': args.file}
-        )
+
+        for f in args.file:
+            if f != '-' and not os.path.exists(f):
+                print(f'file not found: {f}', file=sys.stderr)
+                exit(1)
+            mds.append({'file': f})
     elif args.mds and args.fs:
         print(
             'Either --mds or --fs can be specified, not both',
