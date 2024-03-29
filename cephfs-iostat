@@ -212,15 +212,21 @@ class IOStat(object):
         cstats = dict(zip(counters, curr_metrics))
         hostname = client_meta.get(CLIENT_METADATA_HOSTNAME_KEY, None) or \
             client_meta.get(CLIENT_METADATA_IP_KEY, None)
+        root = client_meta.get(CLIENT_METADATA_MOUNT_ROOT_KEY, None)
 
         s = {}
 
-        if hostname:
-            s['client'] = f'{client_id}@{hostname}'
+        if client_id.startswith('client.'):
+            s['client'] = client_id.split('.', 1)[1]
         else:
             s['client'] = client_id
 
-        s['mount_root'] = client_meta.get(CLIENT_METADATA_MOUNT_ROOT_KEY, None)
+        if hostname:
+            s['client'] += f'@{hostname}'
+
+        if root:
+            s['client'] += f':{root}'
+
         s['oicaps'] = cstats['PINNED_ICAPS'][0]
 
         if duration and prev_metrics:
@@ -289,18 +295,21 @@ class IOStat(object):
                 client_stats = client_stats[:self.ntop]
 
         if self.extended:
-            column_names = ('client', 'mount_root', 'oicaps',
+            column_names = ('oicaps',
                             'r/s', 'rkB/s', 'r_lat',
                             'w/s', 'wkB/s', 'w_lat',
                             'cap_h/s', 'cap_m/s',
-                            'dl_h/s', 'dl_m/s')
+                            'dl_h/s', 'dl_m/s',
+                            'client')
         else:
-            column_names = ('client', 'mount_root', 'oicaps',
+            column_names = ('oicaps',
                             'r/s', 'rkB/s',
-                            'w/s', 'wkB/s')
+                            'w/s', 'wkB/s',
+                            'client')
         tbl = PrettyTable()
         tbl.set_style(PLAIN_COLUMNS)
         tbl.field_names = column_names
+        tbl.align['client'] = 'l'
 
         for s in client_stats:
             tbl.add_row([s[k] is None and "-" or s[k] for k in column_names])
