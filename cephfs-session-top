@@ -43,7 +43,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '-s', '--sort-by',
-    metavar='loadavg|numcaps|recallcaps|releasecaps|liveness|capacqu',
+    metavar='loadavg|numcaps|reccaps|relcaps|liveness|capacqu',
     help='sort by specified field (default: %(default)s)',
     default='loadavg',
     required=False,
@@ -88,17 +88,35 @@ def top(mds, N, sort_by):
         return
 
     if sort_by.lower() == 'loadavg':
-        sessions.sort(key=lambda s: s['request_load_avg'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('request_load_avg', 0),
+            reverse=True
+        )
     elif sort_by.lower() == 'numcaps':
-        sessions.sort(key=lambda s: s['num_caps'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('num_caps', 0),
+            reverse=True
+        )
     elif sort_by.lower() == 'reccaps':
-        sessions.sort(key=lambda s: s['recall_caps']['value'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('recall_caps', {'value': 0})['value'],
+            reverse=True
+        )
     elif sort_by.lower() == 'relcaps':
-        sessions.sort(key=lambda s: s['release_caps']['value'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('release_caps', {'value': 0})['value'],
+            reverse=True
+        )
     elif sort_by.lower() == 'liveness':
-        sessions.sort(key=lambda s: s['session_cache_liveness']['value'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('session_cache_liveness', {'value': 0})['value'],
+            reverse=True
+        )
     elif sort_by.lower() == 'capacqu':
-        sessions.sort(key=lambda s: s['cap_acquisition']['value'], reverse=True)
+        sessions.sort(
+            key=lambda s: s.get('cap_acquisition', {'value': 0})['value'],
+            reverse=True
+        )
     else:
         print(f'invalid sort_by: {sort_by}', file=sys.stderr)
         exit(1)
@@ -106,16 +124,19 @@ def top(mds, N, sort_by):
     if N:
         sessions = sessions[:N]
 
-    print(f'LOADAVG NUMCAPS RECCAPS RELCAPS LIVENESS CAPACQU CLIENT')
+    print('LOADAVG NUMCAPS RECCAPS RELCAPS LIVENESS CAPACQU CLIENT')
 
     for s in sessions:
-        print(f'{s["request_load_avg"]:7} '
-              f'{s["num_caps"]:7} '
-              f'{int(s["recall_caps"]["value"]):7} '
-              f'{int(s["release_caps"]["value"]):7} '
-              f'{int(s["session_cache_liveness"]["value"]):8} '
-              f'{int(s["cap_acquisition"]["value"]):7} '
-              f'{s["id"]} {s["client_metadata"]["hostname"]}:{s["client_metadata"]["root"]}'
+        print(
+            f'{s.get("request_load_avg", 0):7} '
+            f'{s.get("num_caps", 0):7} '
+            f'{int(s.get("recall_caps", {"value": 0})["value"]):7} '
+            f'{int(s.get("release_caps", {"value": 0})["value"]):7} '
+            f'{int(s.get("session_cache_liveness", {"value": 0})["value"]):8} '
+            f'{int(s.get("cap_acquisition", {"value": 0})["value"]):7} '
+            f'{s["id"]} '
+            f'{s.get("client_metadata", {"hostname": "--"})["hostname"]}:'
+            f'{s.get("client_metadata", {"root": "--"})["root"]}'
         )
 
     print()
