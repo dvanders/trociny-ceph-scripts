@@ -43,7 +43,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '-s', '--sort-by',
-    metavar='loadavg|numcaps|reccaps|relcaps|liveness|capacqu',
+    metavar='loadavg|numcaps|reccaps|relcaps|liveness|capacqu|host|root',
     help='sort by specified field (default: %(default)s)',
     default='loadavg',
     required=False,
@@ -116,6 +116,15 @@ def top(mds, N, sort_by):
         sessions.sort(
             key=lambda s: s.get('cap_acquisition', {'value': 0})['value'],
             reverse=True
+        )
+    elif sort_by.lower() == 'host':
+        sessions.sort(
+            key=lambda s: s.get('client_metadata',
+                                {'hostname': '--'})['hostname']
+        )
+    elif sort_by.lower() == 'root':
+        sessions.sort(
+            key=lambda s: s.get('client_metadata', {'root': '--'})['root']
         )
     else:
         print(f'invalid sort_by: {sort_by}', file=sys.stderr)
