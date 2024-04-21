@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -48,13 +49,37 @@ parser.add_argument(
     default='loadavg',
     required=False,
 )
-
+parser.add_argument(
+    '-H', '--filter-by-host',
+    metavar='hostname',
+    help='show sessions for this hostname only',
+    required=False,
+)
+parser.add_argument(
+    '-X', '--filter-by-host-regexp',
+    metavar='regexp',
+    help='show sessions from hosts matching this regexp',
+    required=False,
+)
+parser.add_argument(
+    '-r', '--filter-by-root',
+    metavar='root',
+    help='show sessions for this root only',
+    required=False,
+)
+parser.add_argument(
+    '-R', '--filter-by-root-regexp',
+    metavar='regexp',
+    help='show sessions with roots matching this regexp',
+    required=False,
+)
 
 #
 # Functions
 #
 
-def top(mds, N, sort_by):
+def top(mds, N, sort_by, filter_by_host, filter_by_host_regexp, filter_by_root,
+        filter_by_root_regexp):
     if mds.get('file'):
         print(f'File: {os.path.basename(mds["file"])}')
 
@@ -86,6 +111,38 @@ def top(mds, N, sort_by):
 
     if not sessions:
         return
+
+    if filter_by_host:
+        sessions = [
+            s for s in sessions \
+                if s.get('client_metadata',
+                         {'hostname': ''})['hostname'] == filter_by_host
+        ]
+
+    if filter_by_host_regexp:
+        sessions = [
+            s for s in sessions \
+                if filter_by_host_regexp.search(
+                    s.get('client_metadata',
+                          {'hostname': ''})['hostname']
+                )
+        ]
+
+    if filter_by_root:
+        sessions = [
+            s for s in sessions \
+                if s.get('client_metadata',
+                         {'root': ''})['root'] == filter_by_root
+        ]
+
+    if filter_by_root_regexp:
+        sessions = [
+            s for s in sessions \
+                if filter_by_root_regexp.search(
+                    s.get('client_metadata',
+                          {'root': ''})['root']
+                )
+        ]
 
     if sort_by.lower() == 'loadavg':
         sessions.sort(
@@ -154,6 +211,22 @@ def top(mds, N, sort_by):
 def main():
     args = parser.parse_args()
 
+    filter_by_host_regexp = None
+    if args.filter_by_host_regexp:
+        try:
+            filter_by_host_regexp = re.compile(args.filter_by_host_regexp)
+        except re.error as e:
+            print(f'invalid filter-by-host-regexp: {e}', file=sys.stderr)
+            exit(1)
+
+    filter_by_root_regexp = None
+    if args.filter_by_root_regexp:
+        try:
+            filter_by_root_regexp = re.compile(args.filter_by_root_regexp)
+        except re.error as e:
+            print(f'invalid filter-by-root-regexp: {e}', file=sys.stderr)
+            exit(1)
+
     mds = []
 
     if args.file:
@@ -201,7 +274,8 @@ def main():
         exit(1)
 
     for m in mds:
-        top(m, args.top, args.sort_by)
+        top(m, args.top, args.sort_by, args.filter_by_host,
+            filter_by_host_regexp, args.filter_by_root, filter_by_root_regexp)
 
 #
 # main
